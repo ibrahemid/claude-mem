@@ -2,7 +2,7 @@
  * Viewer Routes
  *
  * Handles health check, viewer UI, and SSE stream endpoints.
- * These are used by the web viewer UI at http://localhost:37777
+ * These are used by the web viewer UI at http://localhost:37778
  */
 
 import express, { Request, Response } from 'express';

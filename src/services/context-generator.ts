@@ -23,7 +23,7 @@ import { getProjectName } from '../utils/project-name.js';
 import { ModeManager } from './domain/ModeManager.js';
 
 // Version marker path - use homedir-based path that works in both CJS and ESM contexts
-const VERSION_MARKER_PATH = path.join(homedir(), '.claude', 'plugins', 'marketplaces', 'thedotmack', 'plugin', '.install-version');
+const VERSION_MARKER_PATH = path.join(homedir(), '.claude', 'plugins', 'marketplaces', 'ibrahemid', 'plugin', '.install-version');
 
 interface ContextConfig {
   // Display counts
@@ -49,10 +49,10 @@ interface ContextConfig {
 
 /**
  * Load all context configuration settings
- * Priority: ~/.claude-mem/settings.json > env var > defaults
+ * Priority: ~/.claude-mem-ibrahemid/settings.json > env var > defaults
  */
 function loadContextConfig(): ContextConfig {
-  const settingsPath = path.join(homedir(), '.claude-mem', 'settings.json');
+  const settingsPath = path.join(SettingsDefaultsManager.get('CLAUDE_MEM_DATA_DIR'), 'settings.json');
   const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
 
   // For non-code modes, use all types/concepts from active mode instead of settings

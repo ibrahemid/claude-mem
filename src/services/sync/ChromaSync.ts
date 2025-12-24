@@ -82,7 +82,7 @@ export class ChromaSync {
   constructor(project: string) {
     this.project = project;
     this.collectionName = `cm__${project}`;
-    this.VECTOR_DB_DIR = path.join(os.homedir(), '.claude-mem', 'vector-db');
+    this.VECTOR_DB_DIR = path.join(SettingsDefaultsManager.get('CLAUDE_MEM_DATA_DIR'), 'vector-db');
   }
 
   /**

@@ -449,7 +449,7 @@ export function ContextSettingsModal({
                   type="number"
                   min="1024"
                   max="65535"
-                  value={formState.CLAUDE_MEM_WORKER_PORT || '37777'}
+                  value={formState.CLAUDE_MEM_WORKER_PORT || '37778'}
                   onChange={(e) => updateSetting('CLAUDE_MEM_WORKER_PORT', e.target.value)}
                 />
               </FormField>

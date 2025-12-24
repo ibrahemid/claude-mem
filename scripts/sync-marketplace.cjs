@@ -11,8 +11,8 @@ const { existsSync, readFileSync } = require('fs');
 const path = require('path');
 const os = require('os');
 
-const INSTALLED_PATH = path.join(os.homedir(), '.claude', 'plugins', 'marketplaces', 'thedotmack');
-const CACHE_BASE_PATH = path.join(os.homedir(), '.claude', 'plugins', 'cache', 'thedotmack', 'claude-mem');
+const INSTALLED_PATH = path.join(os.homedir(), '.claude', 'plugins', 'marketplaces', 'ibrahemid');
+const CACHE_BASE_PATH = path.join(os.homedir(), '.claude', 'plugins', 'cache', 'ibrahemid', 'claude-mem');
 
 function getCurrentBranch() {
   try {
@@ -38,7 +38,7 @@ if (branch && branch !== 'main' && !isForce) {
   console.log('\x1b[33m%s\x1b[0m', 'Running rsync would overwrite beta code.');
   console.log('');
   console.log('Options:');
-  console.log('  1. Use UI at http://localhost:37777 to update beta');
+  console.log('  1. Use UI at http://localhost:37778 to update beta');
   console.log('  2. Switch to stable in UI first, then run sync');
   console.log('  3. Force rsync: npm run sync-marketplace:force');
   console.log('');
@@ -61,13 +61,13 @@ function getPluginVersion() {
 console.log('Syncing to marketplace...');
 try {
   execSync(
-    'rsync -av --delete --exclude=.git --exclude=/.mcp.json ./ ~/.claude/plugins/marketplaces/thedotmack/',
+    'rsync -av --delete --exclude=.git --exclude=/.mcp.json ./ ~/.claude/plugins/marketplaces/ibrahemid/',
     { stdio: 'inherit' }
   );
 
   console.log('Running npm install in marketplace...');
   execSync(
-    'cd ~/.claude/plugins/marketplaces/thedotmack/ && npm install',
+    'cd ~/.claude/plugins/marketplaces/ibrahemid/ && npm install',
     { stdio: 'inherit' }
   );
 
@@ -88,7 +88,7 @@ try {
   const http = require('http');
   const req = http.request({
     hostname: '127.0.0.1',
-    port: 37777,
+    port: 37778,
     path: '/api/admin/restart',
     method: 'POST',
     timeout: 2000
