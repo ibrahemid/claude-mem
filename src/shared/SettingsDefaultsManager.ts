@@ -47,11 +47,11 @@ export class SettingsDefaultsManager {
   private static readonly DEFAULTS: SettingsDefaults = {
     CLAUDE_MEM_MODEL: 'claude-sonnet-4-5',
     CLAUDE_MEM_CONTEXT_OBSERVATIONS: '50',
-    CLAUDE_MEM_WORKER_PORT: '37777',
+    CLAUDE_MEM_WORKER_PORT: '37778',
     CLAUDE_MEM_WORKER_HOST: '127.0.0.1',
     CLAUDE_MEM_SKIP_TOOLS: 'ListMcpResourcesTool,SlashCommand,Skill,TodoWrite,AskUserQuestion',
     // System Configuration
-    CLAUDE_MEM_DATA_DIR: join(homedir(), '.claude-mem'),
+    CLAUDE_MEM_DATA_DIR: join(homedir(), '.claude-mem-ibrahemid'),
     CLAUDE_MEM_LOG_LEVEL: 'INFO',
     CLAUDE_MEM_PYTHON_VERSION: '3.13',
     CLAUDE_CODE_PATH: '', // Empty means auto-detect via 'which claude'

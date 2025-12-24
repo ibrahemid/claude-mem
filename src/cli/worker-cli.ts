@@ -1,8 +1,10 @@
 import { ProcessManager } from '../services/process/ProcessManager.js';
 import { getWorkerPort } from '../shared/worker-utils.js';
+import { SettingsDefaultsManager } from '../shared/SettingsDefaultsManager.js';
 
 const command = process.argv[2];
 const port = getWorkerPort();
+const dataDir = SettingsDefaultsManager.get('CLAUDE_MEM_DATA_DIR');
 
 async function main() {
   switch (command) {
@@ -11,7 +13,7 @@ async function main() {
       if (result.success) {
         console.log(`Worker started (PID: ${result.pid})`);
         const date = new Date().toISOString().slice(0, 10);
-        console.log(`Logs: ~/.claude-mem/logs/worker-${date}.log`);
+        console.log(`Logs: ${dataDir}/logs/worker-${date}.log`);
         process.exit(0);
       } else {
         console.error(`Failed to start: ${result.error}`);

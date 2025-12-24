@@ -157,7 +157,7 @@ export class WorkerService {
     this.app.get('/api/version', (_req, res) => {
       const { homedir } = require('os');
       const { readFileSync } = require('fs');
-      const marketplaceRoot = path.join(homedir(), '.claude', 'plugins', 'marketplaces', 'thedotmack');
+      const marketplaceRoot = path.join(homedir(), '.claude', 'plugins', 'marketplaces', 'ibrahemid');
       const packageJsonPath = path.join(marketplaceRoot, 'package.json');
 
       // Read version from marketplace package.json

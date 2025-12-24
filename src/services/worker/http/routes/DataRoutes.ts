@@ -11,6 +11,7 @@ import { readFileSync, statSync, existsSync } from 'fs';
 import { homedir } from 'os';
 import { getPackageRoot } from '../../../../shared/paths.js';
 import { getWorkerPort } from '../../../../shared/worker-utils.js';
+import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsManager.js';
 import { PaginationHelper } from '../../PaginationHelper.js';
 import { DatabaseManager } from '../../DatabaseManager.js';
 import { SessionManager } from '../../SessionManager.js';
@@ -205,7 +206,7 @@ export class DataRoutes extends BaseRouteHandler {
     const totalSummaries = db.prepare('SELECT COUNT(*) as count FROM session_summaries').get() as { count: number };
 
     // Get database file size and path
-    const dbPath = path.join(homedir(), '.claude-mem', 'claude-mem.db');
+    const dbPath = path.join(SettingsDefaultsManager.get('CLAUDE_MEM_DATA_DIR'), 'claude-mem.db');
     let dbSize = 0;
     if (existsSync(dbPath)) {
       dbSize = statSync(dbPath).size;
