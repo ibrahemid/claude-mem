@@ -11,6 +11,7 @@ import { STANDARD_HOOK_RESPONSE } from './hook-response.js';
 import { logger } from '../utils/logger.js';
 import { ensureWorkerRunning, getWorkerPort } from '../shared/worker-utils.js';
 import { HOOK_TIMEOUTS } from '../shared/hook-constants.js';
+import { isProjectExcluded } from '../shared/project-exclusion.js';
 
 export interface PostToolUseInput {
   session_id: string;
@@ -32,6 +33,11 @@ async function saveHook(input?: PostToolUseInput): Promise<void> {
   }
 
   const { session_id, cwd, tool_name, tool_input, tool_response } = input;
+
+  if (isProjectExcluded(cwd)) {
+    console.log(STANDARD_HOOK_RESPONSE);
+    return;
+  }
 
   const port = getWorkerPort();
 

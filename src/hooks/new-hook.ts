@@ -2,6 +2,7 @@ import { stdin } from 'process';
 import { STANDARD_HOOK_RESPONSE } from './hook-response.js';
 import { ensureWorkerRunning, getWorkerPort } from '../shared/worker-utils.js';
 import { getProjectName } from '../utils/project-name.js';
+import { isProjectExcluded } from '../shared/project-exclusion.js';
 
 export interface UserPromptSubmitInput {
   session_id: string;
@@ -22,8 +23,13 @@ async function newHook(input?: UserPromptSubmitInput): Promise<void> {
   }
 
   const { session_id, cwd, prompt } = input;
-  const project = getProjectName(cwd);
 
+  if (isProjectExcluded(cwd)) {
+    console.log(STANDARD_HOOK_RESPONSE);
+    return;
+  }
+
+  const project = getProjectName(cwd);
   const port = getWorkerPort();
 
   // Initialize session via HTTP - handles DB operations and privacy checks

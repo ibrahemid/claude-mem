@@ -501,6 +501,49 @@ export class ChromaSync {
   }
 
   /**
+   * Delete all documents for an observation from Chroma
+   * Observation documents have IDs like: obs_{id}_narrative, obs_{id}_fact_0, etc.
+   */
+  async deleteObservation(observationId: number): Promise<void> {
+    await this.ensureConnection();
+
+    if (!this.client) {
+      throw new Error(
+        'Chroma client not initialized. Call ensureConnection() before using client methods.' +
+        ` Project: ${this.project}`
+      );
+    }
+
+    logger.info('CHROMA_SYNC', 'Deleting observation from Chroma', {
+      observationId,
+      project: this.project
+    });
+
+    try {
+      await this.client.callTool({
+        name: 'chroma_delete_documents',
+        arguments: {
+          collection_name: this.collectionName,
+          where: {
+            sqlite_id: observationId,
+            doc_type: 'observation'
+          }
+        }
+      });
+
+      logger.info('CHROMA_SYNC', 'Observation deleted from Chroma', {
+        observationId,
+        project: this.project
+      });
+    } catch (error) {
+      logger.error('CHROMA_SYNC', 'Failed to delete observation from Chroma', {
+        observationId,
+        project: this.project
+      }, error as Error);
+    }
+  }
+
+  /**
    * Fetch all existing document IDs from Chroma collection
    * Returns Sets of SQLite IDs for observations, summaries, and prompts
    */

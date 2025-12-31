@@ -842,6 +842,16 @@ export class SessionStore {
   }
 
   /**
+   * Delete a single observation by ID
+   * Returns true if observation was deleted, false if not found
+   */
+  deleteObservationById(id: number): boolean {
+    const stmt = this.db.prepare('DELETE FROM observations WHERE id = ?');
+    const result = stmt.run(id);
+    return result.changes > 0;
+  }
+
+  /**
    * Get observations by array of IDs with ordering and limit
    */
   getObservationsByIds(

@@ -1,4 +1,53 @@
+<div align="center">
 
+### 🔀 Fork of [thedotmack/claude-mem](https://github.com/thedotmack/claude-mem)
+
+[![Upstream](https://img.shields.io/badge/upstream-thedotmack%2Fclaude--mem-blue)](https://github.com/thedotmack/claude-mem)
+[![Fork](https://img.shields.io/badge/fork-ibrahemid%2Fclaude--mem-green)](https://github.com/ibrahemid/claude-mem)
+
+**A fork of [thedotmack/claude-mem](https://github.com/thedotmack/claude-mem) with changes that I find helpful.**
+
+> **Install:** `/plugin marketplace add ibrahemid/claude-mem`
+
+</div>
+
+---
+
+## What's Different in This Fork
+
+### ✨ Features
+
+| Feature | Description |
+|---------|-------------|
+| **Shrink Memory** | Reduce memory footprint by deleting or summarizing old observations. Filter by age (30/60/90+ days) and choose between Delete or Summarize modes. |
+| **Project Toggles** | Quickly enable or disable context injection per project using simple toggle switches in the UI. |
+| **Compact Header** | Streamlined top bar with cleaner layout and improved button visibility. |
+
+### 🔧 Changes
+
+- **Different Port** — Runs on port `37778` instead of `37777` to avoid conflicts if running alongside the original
+- **Projects Modal** — Manage all projects from a dedicated modal with bulk enable/disable actions
+- **Shrink Modal** — Visual selection of observations with token counts and relative age display
+
+---
+
+## Installation
+
+```
+/plugin marketplace add ibrahemid/claude-mem
+/plugin install claude-mem
+```
+
+Web viewer available at: **http://localhost:37778**
+
+---
+
+## Upstream
+
+This fork tracks [thedotmack/claude-mem](https://github.com/thedotmack/claude-mem).
+See the original repository for full documentation.
+
+---
 
 <h1 align="center">
   <br>

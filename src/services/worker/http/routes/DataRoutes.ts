@@ -16,6 +16,7 @@ import { PaginationHelper } from '../../PaginationHelper.js';
 import { DatabaseManager } from '../../DatabaseManager.js';
 import { SessionManager } from '../../SessionManager.js';
 import { SSEBroadcaster } from '../../SSEBroadcaster.js';
+import { ShrinkAnalyzer } from '../../ShrinkAnalyzer.js';
 import type { WorkerService } from '../../../worker-service.js';
 import { BaseRouteHandler } from '../BaseRouteHandler.js';
 
@@ -39,6 +40,7 @@ export class DataRoutes extends BaseRouteHandler {
 
     // Fetch by ID endpoints
     app.get('/api/observation/:id', this.handleGetObservationById.bind(this));
+    app.delete('/api/observation/:id', this.handleDeleteObservation.bind(this));
     app.post('/api/observations/batch', this.handleGetObservationsByIds.bind(this));
     app.get('/api/session/:id', this.handleGetSessionById.bind(this));
     app.post('/api/sdk-sessions/batch', this.handleGetSdkSessionsByIds.bind(this));
@@ -54,6 +56,10 @@ export class DataRoutes extends BaseRouteHandler {
 
     // Import endpoint
     app.post('/api/import', this.handleImport.bind(this));
+
+    // Shrink endpoints
+    app.post('/api/shrink/analyze', this.handleShrinkAnalyze.bind(this));
+    app.post('/api/shrink/execute', this.handleShrinkExecute.bind(this));
   }
 
   /**
@@ -100,6 +106,38 @@ export class DataRoutes extends BaseRouteHandler {
     }
 
     res.json(observation);
+  });
+
+  /**
+   * Delete observation by ID
+   * DELETE /api/observation/:id
+   */
+  private handleDeleteObservation = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
+    const id = this.parseIntParam(req, res, 'id');
+    if (id === null) return;
+
+    const store = this.dbManager.getSessionStore();
+    const observation = store.getObservationById(id);
+
+    if (!observation) {
+      this.notFound(res, `Observation #${id} not found`);
+      return;
+    }
+
+    const deleted = store.deleteObservationById(id);
+
+    if (!deleted) {
+      res.status(500).json({ error: 'Failed to delete observation' });
+      return;
+    }
+
+    this.sseBroadcaster.broadcast({
+      type: 'observation_deleted',
+      id,
+      project: observation.project
+    });
+
+    res.json({ success: true, id });
   });
 
   /**
@@ -363,6 +401,60 @@ export class DataRoutes extends BaseRouteHandler {
     res.json({
       success: true,
       stats
+    });
+  });
+
+  /**
+   * Analyze observations for shrinking
+   * POST /api/shrink/analyze
+   * Body: { project?: string, targetReduction?: number, minAge?: number, minScore?: number }
+   */
+  private handleShrinkAnalyze = this.wrapHandler((req: Request, res: Response): void => {
+    const { project, targetReduction, minAge, maxAge, minScore } = req.body;
+
+    const store = this.dbManager.getSessionStore();
+    const analyzer = new ShrinkAnalyzer(store);
+
+    const analysis = analyzer.analyze({
+      project,
+      targetReduction: targetReduction ? parseFloat(targetReduction) : undefined,
+      minAge: minAge ? parseInt(minAge) : undefined,
+      maxAge: maxAge ? parseInt(maxAge) : undefined,
+      minScore: minScore ? parseFloat(minScore) : undefined
+    });
+
+    res.json(analysis);
+  });
+
+  /**
+   * Execute shrink operation
+   * POST /api/shrink/execute
+   * Body: { observationIds: number[] }
+   */
+  private handleShrinkExecute = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
+    const { observationIds } = req.body;
+
+    if (!Array.isArray(observationIds) || observationIds.length === 0) {
+      this.badRequest(res, 'observationIds must be a non-empty array');
+      return;
+    }
+
+    const store = this.dbManager.getSessionStore();
+    const analyzer = new ShrinkAnalyzer(store);
+
+    const result = await analyzer.executeShrink(observationIds);
+
+    for (const id of observationIds) {
+      this.sseBroadcaster.broadcast({
+        type: 'observation_deleted',
+        id
+      });
+    }
+
+    res.json({
+      success: true,
+      deleted: result.deleted,
+      failed: result.failed
     });
   });
 }

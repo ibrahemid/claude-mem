@@ -43,7 +43,7 @@ export type FeedItem =
   | (UserPrompt & { itemType: 'prompt' });
 
 export interface StreamEvent {
-  type: 'initial_load' | 'new_observation' | 'new_summary' | 'new_prompt' | 'processing_status';
+  type: 'initial_load' | 'new_observation' | 'new_summary' | 'new_prompt' | 'processing_status' | 'observation_deleted';
   observations?: Observation[];
   summaries?: Summary[];
   prompts?: UserPrompt[];
@@ -52,6 +52,9 @@ export interface StreamEvent {
   summary?: Summary;
   prompt?: UserPrompt;
   isProcessing?: boolean;
+  queueDepth?: number;
+  id?: number;
+  project?: string;
 }
 
 export interface Settings {
@@ -78,6 +81,9 @@ export interface Settings {
   // Feature Toggles
   CLAUDE_MEM_CONTEXT_SHOW_LAST_SUMMARY?: string;
   CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE?: string;
+
+  // Project Exclusion
+  CLAUDE_MEM_EXCLUDED_PROJECTS?: string;
 }
 
 export interface WorkerStats {
