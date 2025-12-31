@@ -1,4 +1,9 @@
 /**
+ * API base URL
+ */
+export const API_BASE = '/api';
+
+/**
  * API endpoint paths
  * Centralized to avoid magic strings scattered throughout the codebase
  */

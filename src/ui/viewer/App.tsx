@@ -2,17 +2,22 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Header } from './components/Header';
 import { Feed } from './components/Feed';
 import { ContextSettingsModal } from './components/ContextSettingsModal';
+import { ShrinkModal } from './components/ShrinkModal';
+import { ProjectsModal } from './components/ProjectsModal';
 import { useSSE } from './hooks/useSSE';
 import { useSettings } from './hooks/useSettings';
 import { useStats } from './hooks/useStats';
 import { usePagination } from './hooks/usePagination';
 import { useTheme } from './hooks/useTheme';
+import { useProjectExclusion } from './hooks/useProjectExclusion';
 import { Observation, Summary, UserPrompt } from './types';
 import { mergeAndDeduplicateByProject } from './utils/data';
 
 export function App() {
   const [currentFilter, setCurrentFilter] = useState('');
   const [contextPreviewOpen, setContextPreviewOpen] = useState(false);
+  const [shrinkModalOpen, setShrinkModalOpen] = useState(false);
+  const [projectsModalOpen, setProjectsModalOpen] = useState(false);
   const [paginatedObservations, setPaginatedObservations] = useState<Observation[]>([]);
   const [paginatedSummaries, setPaginatedSummaries] = useState<Summary[]>([]);
   const [paginatedPrompts, setPaginatedPrompts] = useState<UserPrompt[]>([]);
@@ -21,16 +26,13 @@ export function App() {
   const { settings, saveSettings, isSaving, saveStatus } = useSettings();
   const { stats, refreshStats } = useStats();
   const { preference, resolvedTheme, setThemePreference } = useTheme();
+  const { excludedProjects, toggleProject, enableAll, disableAll } = useProjectExclusion();
   const pagination = usePagination(currentFilter);
 
-  // When filtering by project: ONLY use paginated data (API-filtered)
-  // When showing all projects: merge SSE live data with paginated data
   const allObservations = useMemo(() => {
     if (currentFilter) {
-      // Project filter active: API handles filtering, ignore SSE items
       return paginatedObservations;
     }
-    // No filter: merge SSE + paginated, deduplicate by ID
     return mergeAndDeduplicateByProject(observations, paginatedObservations);
   }, [observations, paginatedObservations, currentFilter]);
 
@@ -48,12 +50,10 @@ export function App() {
     return mergeAndDeduplicateByProject(prompts, paginatedPrompts);
   }, [prompts, paginatedPrompts, currentFilter]);
 
-  // Toggle context preview modal
   const toggleContextPreview = useCallback(() => {
     setContextPreviewOpen(prev => !prev);
   }, []);
 
-  // Handle loading more data
   const handleLoadMore = useCallback(async () => {
     try {
       const [newObservations, newSummaries, newPrompts] = await Promise.all([
@@ -76,13 +76,11 @@ export function App() {
     }
   }, [currentFilter, pagination.observations, pagination.summaries, pagination.prompts]);
 
-  // Reset paginated data and load first page when filter changes
   useEffect(() => {
     setPaginatedObservations([]);
     setPaginatedSummaries([]);
     setPaginatedPrompts([]);
     handleLoadMore();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentFilter]);
 
   return (
@@ -97,6 +95,8 @@ export function App() {
         themePreference={preference}
         onThemeChange={setThemePreference}
         onContextPreviewToggle={toggleContextPreview}
+        onShrinkToggle={() => setShrinkModalOpen(true)}
+        onProjectsToggle={() => setProjectsModalOpen(true)}
       />
 
       <Feed
@@ -115,6 +115,22 @@ export function App() {
         onSave={saveSettings}
         isSaving={isSaving}
         saveStatus={saveStatus}
+      />
+
+      <ShrinkModal
+        isOpen={shrinkModalOpen}
+        onClose={() => setShrinkModalOpen(false)}
+        project={currentFilter || undefined}
+      />
+
+      <ProjectsModal
+        isOpen={projectsModalOpen}
+        onClose={() => setProjectsModalOpen(false)}
+        projects={projects}
+        excludedProjects={excludedProjects}
+        onToggleProject={toggleProject}
+        onEnableAll={enableAll}
+        onDisableAll={disableAll}
       />
     </>
   );

@@ -15,6 +15,7 @@ import { logger } from '../utils/logger.js';
 import { ensureWorkerRunning, getWorkerPort } from '../shared/worker-utils.js';
 import { HOOK_TIMEOUTS } from '../shared/hook-constants.js';
 import { extractLastMessage } from '../shared/transcript-parser.js';
+import { isProjectExcluded } from '../shared/project-exclusion.js';
 
 export interface StopInput {
   session_id: string;
@@ -33,7 +34,12 @@ async function summaryHook(input?: StopInput): Promise<void> {
     throw new Error('summaryHook requires input');
   }
 
-  const { session_id } = input;
+  const { session_id, cwd } = input;
+
+  if (cwd && isProjectExcluded(cwd)) {
+    console.log(STANDARD_HOOK_RESPONSE);
+    return;
+  }
 
   const port = getWorkerPort();
 

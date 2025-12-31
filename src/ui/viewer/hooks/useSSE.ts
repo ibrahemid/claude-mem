@@ -89,6 +89,13 @@ export function useSSE() {
                 setQueueDepth(data.queueDepth || 0);
               }
               break;
+
+            case 'observation_deleted':
+              if (data.id) {
+                console.log('[SSE] Observation deleted:', data.id);
+                setObservations(prev => prev.filter(o => o.id !== data.id));
+              }
+              break;
           }
         } catch (error) {
           console.error('[SSE] Failed to parse message:', error);
