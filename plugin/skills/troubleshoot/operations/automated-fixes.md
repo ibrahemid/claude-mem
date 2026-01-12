@@ -7,7 +7,7 @@ One-command fix sequences for common claude-mem issues.
 **Use when:** General issues, worker not responding, after updates
 
 ```bash
-cd ~/.claude/plugins/marketplaces/thedotmack/ && \
+cd ~/.claude/plugins/marketplaces/ibrahemid/ && \
 npm run worker:stop; \
 npm install && \
 npm run worker:start && \
@@ -29,7 +29,7 @@ curl -s http://127.0.0.1:37777/health
 **Use when:** Worker status shows it's not running
 
 ```bash
-cd ~/.claude/plugins/marketplaces/thedotmack/ && \
+cd ~/.claude/plugins/marketplaces/ibrahemid/ && \
 npm run worker:start && \
 sleep 2 && \
 npm run worker:status
@@ -42,7 +42,7 @@ npm run worker:status
 **Use when:** Worker won't start due to missing packages
 
 ```bash
-cd ~/.claude/plugins/marketplaces/thedotmack/ && \
+cd ~/.claude/plugins/marketplaces/ibrahemid/ && \
 npm install && \
 claude-mem restart
 ```
@@ -53,7 +53,7 @@ claude-mem restart
 
 ```bash
 rm -f ~/.claude-mem/worker.pid && \
-cd ~/.claude/plugins/marketplaces/thedotmack/ && \
+cd ~/.claude/plugins/marketplaces/ibrahemid/ && \
 npm run worker:start && \
 sleep 2 && \
 curl -s http://127.0.0.1:37777/health
@@ -69,7 +69,7 @@ curl -s http://127.0.0.1:37777/health
 # Change to port 37778
 mkdir -p ~/.claude-mem && \
 echo '{"CLAUDE_MEM_WORKER_PORT":"37778"}' > ~/.claude-mem/settings.json && \
-cd ~/.claude/plugins/marketplaces/thedotmack/ && \
+cd ~/.claude/plugins/marketplaces/ibrahemid/ && \
 claude-mem restart && \
 sleep 2 && \
 curl -s http://127.0.0.1:37778/health
@@ -85,7 +85,7 @@ curl -s http://127.0.0.1:37778/health
 # Backup and test integrity
 cp ~/.claude-mem/claude-mem.db ~/.claude-mem/claude-mem.db.backup && \
 sqlite3 ~/.claude-mem/claude-mem.db "PRAGMA integrity_check;" && \
-cd ~/.claude/plugins/marketplaces/thedotmack/ && \
+cd ~/.claude/plugins/marketplaces/ibrahemid/ && \
 claude-mem restart
 ```
 
@@ -93,7 +93,7 @@ claude-mem restart
 ```bash
 # WARNING: This deletes all memory data
 mv ~/.claude-mem/claude-mem.db ~/.claude-mem/claude-mem.db.old && \
-cd ~/.claude/plugins/marketplaces/thedotmack/ && \
+cd ~/.claude/plugins/marketplaces/ibrahemid/ && \
 claude-mem restart
 ```
 
@@ -106,7 +106,7 @@ claude-mem restart
 cp ~/.claude-mem/claude-mem.db ~/.claude-mem/claude-mem.db.backup 2>/dev/null
 
 # Stop worker
-cd ~/.claude/plugins/marketplaces/thedotmack/
+cd ~/.claude/plugins/marketplaces/ibrahemid/
 npm run worker:stop
 
 # Clean PID file
@@ -134,7 +134,7 @@ tar -czf ~/.claude-mem/logs-archive-$(date +%Y-%m-%d).tar.gz ~/.claude-mem/logs/
 find ~/.claude-mem/logs/ -name "worker-*.log" -mtime +7 -delete
 
 # Restart worker for fresh log
-cd ~/.claude/plugins/marketplaces/thedotmack/
+cd ~/.claude/plugins/marketplaces/ibrahemid/
 claude-mem restart
 ```
 
@@ -146,7 +146,7 @@ claude-mem restart
 
 ```bash
 # Check worker status
-cd ~/.claude/plugins/marketplaces/thedotmack/
+cd ~/.claude/plugins/marketplaces/ibrahemid/
 npm run worker:status
 
 # Check health
@@ -173,7 +173,7 @@ grep -i "error" ~/.claude-mem/logs/worker-$(date +%Y-%m-%d).log | tail -20
 
 **Quick health check:**
 ```bash
-cd ~/.claude/plugins/marketplaces/thedotmack/ && npm run worker:status && curl -s http://127.0.0.1:37777/health && echo " ✓ All systems OK"
+cd ~/.claude/plugins/marketplaces/ibrahemid/ && npm run worker:status && curl -s http://127.0.0.1:37777/health && echo " ✓ All systems OK"
 ```
 
 ## Troubleshooting the Fixes
@@ -186,7 +186,7 @@ cd ~/.claude/plugins/marketplaces/thedotmack/ && npm run worker:status && curl -
    ```
 3. Try manual worker start to see detailed error:
    ```bash
-   cd ~/.claude/plugins/marketplaces/thedotmack/
+   cd ~/.claude/plugins/marketplaces/ibrahemid/
    bun plugin/scripts/worker-service.js
    ```
 4. Use the bug report tool:

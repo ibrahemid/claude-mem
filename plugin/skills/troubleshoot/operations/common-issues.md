@@ -17,7 +17,7 @@ Quick fixes for frequently encountered claude-mem problems.
 **Fix:**
 1. Verify worker is running:
    ```bash
-   cd ~/.claude/plugins/marketplaces/thedotmack/
+   cd ~/.claude/plugins/marketplaces/ibrahemid/
    npm run worker:status
    ```
 
@@ -28,7 +28,7 @@ Quick fixes for frequently encountered claude-mem problems.
 
 3. Restart worker and start new session:
    ```bash
-   cd ~/.claude/plugins/marketplaces/thedotmack/
+   cd ~/.claude/plugins/marketplaces/ibrahemid/
    claude-mem restart
    ```
 
@@ -123,7 +123,7 @@ Quick fixes for frequently encountered claude-mem problems.
 **Fix:**
 1. Try manual worker start to see error:
    ```bash
-   cd ~/.claude/plugins/marketplaces/thedotmack/
+   cd ~/.claude/plugins/marketplaces/ibrahemid/
    bun plugin/scripts/worker-service.js
    # Should start server on port 37777 or show error
    ```
@@ -136,7 +136,7 @@ Quick fixes for frequently encountered claude-mem problems.
 
 3. If dependencies missing:
    ```bash
-   cd ~/.claude/plugins/marketplaces/thedotmack/
+   cd ~/.claude/plugins/marketplaces/ibrahemid/
    npm install
    npm run worker:start
    ```
@@ -172,7 +172,7 @@ Quick fixes for frequently encountered claude-mem problems.
 
 4. If FTS5 out of sync, restart worker (triggers reindex):
    ```bash
-   cd ~/.claude/plugins/marketplaces/thedotmack/
+   cd ~/.claude/plugins/marketplaces/ibrahemid/
    claude-mem restart
    ```
 
@@ -193,7 +193,7 @@ Quick fixes for frequently encountered claude-mem problems.
    ```bash
    mkdir -p ~/.claude-mem
    echo '{"CLAUDE_MEM_WORKER_PORT":"37778"}' > ~/.claude-mem/settings.json
-   cd ~/.claude/plugins/marketplaces/thedotmack/
+   cd ~/.claude/plugins/marketplaces/ibrahemid/
    claude-mem restart
    ```
 
@@ -218,7 +218,7 @@ Quick fixes for frequently encountered claude-mem problems.
 3. If repair fails, recreate (loses data):
    ```bash
    rm ~/.claude-mem/claude-mem.db
-   cd ~/.claude/plugins/marketplaces/thedotmack/
+   cd ~/.claude/plugins/marketplaces/ibrahemid/
    claude-mem restart
    # Worker will create new database
    ```

@@ -16,7 +16,7 @@ The claude-mem worker is a persistent background service managed by Bun. It:
 
 ```bash
 # Check worker status using npm script
-cd ~/.claude/plugins/marketplaces/thedotmack/
+cd ~/.claude/plugins/marketplaces/ibrahemid/
 npm run worker:status
 
 # Or check health endpoint directly
@@ -78,7 +78,7 @@ curl -s http://127.0.0.1:$PORT/health
 
 ```bash
 # View logs using npm script
-cd ~/.claude/plugins/marketplaces/thedotmack/
+cd ~/.claude/plugins/marketplaces/ibrahemid/
 npm run worker:logs
 
 # View today's log file directly
@@ -143,7 +143,7 @@ Worker restarting...
 ### Basic Start
 
 ```bash
-cd ~/.claude/plugins/marketplaces/thedotmack/
+cd ~/.claude/plugins/marketplaces/ibrahemid/
 npm run worker:start
 ```
 
@@ -151,7 +151,7 @@ npm run worker:start
 
 ```bash
 # Restart worker (stops and starts)
-cd ~/.claude/plugins/marketplaces/thedotmack/
+cd ~/.claude/plugins/marketplaces/ibrahemid/
 claude-mem restart
 
 # Or manually stop and start
@@ -162,7 +162,7 @@ npm run worker:start
 ## Stopping the Worker
 
 ```bash
-cd ~/.claude/plugins/marketplaces/thedotmack/
+cd ~/.claude/plugins/marketplaces/ibrahemid/
 npm run worker:stop
 ```
 
@@ -172,7 +172,7 @@ npm run worker:stop
 
 1. **Try manual start to see error:**
    ```bash
-   cd ~/.claude/plugins/marketplaces/thedotmack/
+   cd ~/.claude/plugins/marketplaces/ibrahemid/
    bun plugin/scripts/worker-service.js
    ```
    This runs the worker directly, showing full error output.
@@ -186,7 +186,7 @@ npm run worker:stop
 
 3. **Check dependencies:**
    ```bash
-   cd ~/.claude/plugins/marketplaces/thedotmack/
+   cd ~/.claude/plugins/marketplaces/ibrahemid/
    ls node_modules/@anthropic-ai/claude-agent-sdk
    ls node_modules/express
    ```
@@ -211,7 +211,7 @@ npm run worker:stop
 
 **Dependencies missing:**
 ```bash
-cd ~/.claude/plugins/marketplaces/thedotmack/
+cd ~/.claude/plugins/marketplaces/ibrahemid/
 npm install
 npm run worker:start
 ```
@@ -246,7 +246,7 @@ If worker keeps restarting (check logs for repeated startup messages):
 
 3. **Run worker in foreground to see crashes:**
    ```bash
-   cd ~/.claude/plugins/marketplaces/thedotmack/
+   cd ~/.claude/plugins/marketplaces/ibrahemid/
    bun plugin/scripts/worker-service.js
    ```
 

@@ -53,7 +53,7 @@ Choose the appropriate operation file for detailed instructions:
 
 **Fast automated fix (try this first):**
 ```bash
-cd ~/.claude/plugins/marketplaces/thedotmack/ && \
+cd ~/.claude/plugins/marketplaces/ibrahemid/ && \
 npm run worker:stop; \
 npm install && \
 npm run worker:start && \
@@ -78,12 +78,12 @@ When troubleshooting:
 
 - **Worker port:** Default 37777 (configurable via `CLAUDE_MEM_WORKER_PORT`)
 - **Database location:** `~/.claude-mem/claude-mem.db`
-- **Plugin location:** `~/.claude/plugins/marketplaces/thedotmack/`
+- **Plugin location:** `~/.claude/plugins/marketplaces/ibrahemid/`
 - **Worker PID file:** `~/.claude-mem/worker.pid`
 
 ## Error Reporting
 
 If troubleshooting doesn't resolve the issue, collect diagnostic data and direct user to:
-https://github.com/thedotmack/claude-mem/issues
+https://github.com/ibrahemid/claude-mem/issues
 
 See [operations/diagnostics.md](operations/diagnostics.md#reporting-issues) for details on what to collect.
