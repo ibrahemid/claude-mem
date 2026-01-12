@@ -3,8 +3,9 @@
  * Uses table format matching context-generator style for visual consistency
  */
 
-import { ObservationSearchResult, SessionSummarySearchResult, UserPromptSearchResult } from '../sqlite/types.js';
+import type { ObservationSearchResult, SessionSummarySearchResult, UserPromptSearchResult } from '../sqlite/types.js';
 import { ModeManager } from '../domain/ModeManager.js';
+import { logger } from '../../utils/logger.js';
 
 // Token estimation constant (matches context-generator)
 const CHARS_PER_TOKEN_ESTIMATE = 4;
@@ -73,7 +74,7 @@ Tips:
     const id = `#S${session.id}`;
     const time = this.formatTime(session.created_at_epoch);
     const icon = '🎯';
-    const title = session.request || `Session ${session.sdk_session_id?.substring(0, 8) || 'unknown'}`;
+    const title = session.request || `Session ${session.memory_session_id?.substring(0, 8) || 'unknown'}`;
 
     return `| ${id} | ${time} | ${icon} | ${title} | - | - |`;
   }
@@ -136,7 +137,7 @@ Tips:
     const id = `#S${session.id}`;
     const time = this.formatTime(session.created_at_epoch);
     const icon = '🎯';
-    const title = session.request || `Session ${session.sdk_session_id?.substring(0, 8) || 'unknown'}`;
+    const title = session.request || `Session ${session.memory_session_id?.substring(0, 8) || 'unknown'}`;
 
     // Use ditto mark if same time as previous row
     const timeDisplay = time === lastTime ? '″' : time;

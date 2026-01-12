@@ -15,7 +15,6 @@ import { logger } from '../utils/logger.js';
 import { ensureWorkerRunning, getWorkerPort } from '../shared/worker-utils.js';
 import { HOOK_TIMEOUTS } from '../shared/hook-constants.js';
 import { extractLastMessage } from '../shared/transcript-parser.js';
-import { isProjectExcluded } from '../shared/project-exclusion.js';
 
 export interface StopInput {
   session_id: string;
@@ -34,12 +33,7 @@ async function summaryHook(input?: StopInput): Promise<void> {
     throw new Error('summaryHook requires input');
   }
 
-  const { session_id, cwd } = input;
-
-  if (cwd && isProjectExcluded(cwd)) {
-    console.log(STANDARD_HOOK_RESPONSE);
-    return;
-  }
+  const { session_id } = input;
 
   const port = getWorkerPort();
 
@@ -48,13 +42,13 @@ async function summaryHook(input?: StopInput): Promise<void> {
     throw new Error(`Missing transcript_path in Stop hook input for session ${session_id}`);
   }
 
-  // Extract last user AND assistant messages from transcript
-  const lastUserMessage = extractLastMessage(input.transcript_path, 'user');
+  // Extract last assistant message from transcript (the work Claude did)
+  // Note: "user" messages in transcripts are mostly tool_results, not actual user input.
+  // The user's original request is already stored in user_prompts table.
   const lastAssistantMessage = extractLastMessage(input.transcript_path, 'assistant', true);
 
   logger.dataIn('HOOK', 'Stop: Requesting summary', {
     workerPort: port,
-    hasLastUserMessage: !!lastUserMessage,
     hasLastAssistantMessage: !!lastAssistantMessage
   });
 
@@ -63,14 +57,14 @@ async function summaryHook(input?: StopInput): Promise<void> {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      claudeSessionId: session_id,
-      last_user_message: lastUserMessage,
+      contentSessionId: session_id,
       last_assistant_message: lastAssistantMessage
-    }),
-    signal: AbortSignal.timeout(HOOK_TIMEOUTS.DEFAULT)
+    })
+    // Note: Removed signal to avoid Windows Bun cleanup issue (libuv assertion)
   });
 
   if (!response.ok) {
+    console.log(STANDARD_HOOK_RESPONSE);
     throw new Error(`Summary generation failed: ${response.status}`);
   }
 
@@ -83,11 +77,17 @@ async function summaryHook(input?: StopInput): Promise<void> {
 let input = '';
 stdin.on('data', (chunk) => input += chunk);
 stdin.on('end', async () => {
-  let parsed: StopInput | undefined;
   try {
-    parsed = input ? JSON.parse(input) : undefined;
+    let parsed: StopInput | undefined;
+    try {
+      parsed = input ? JSON.parse(input) : undefined;
+    } catch (error) {
+      throw new Error(`Failed to parse hook input: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    await summaryHook(parsed);
   } catch (error) {
-    throw new Error(`Failed to parse hook input: ${error instanceof Error ? error.message : String(error)}`);
+    logger.error('HOOK', 'summary-hook failed', {}, error as Error);
+  } finally {
+    process.exit(0);
   }
-  await summaryHook(parsed);
 });

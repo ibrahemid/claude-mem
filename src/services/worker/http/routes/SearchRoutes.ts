@@ -8,6 +8,7 @@
 import express, { Request, Response } from 'express';
 import { SearchManager } from '../../SearchManager.js';
 import { BaseRouteHandler } from '../BaseRouteHandler.js';
+import { logger } from '../../../../utils/logger.js';
 
 export class SearchRoutes extends BaseRouteHandler {
   constructor(
@@ -194,31 +195,46 @@ export class SearchRoutes extends BaseRouteHandler {
 
   /**
    * Context injection endpoint for hooks
-   * GET /api/context/inject?project=...&colors=true
+   * GET /api/context/inject?projects=...&colors=true
+   * GET /api/context/inject?project=...&colors=true (legacy, single project)
    *
    * Returns pre-formatted context string ready for display.
    * Use colors=true for ANSI-colored terminal output.
+   *
+   * For worktrees, pass comma-separated projects (e.g., "main,worktree-branch")
+   * to get a unified timeline from both parent and worktree.
    */
   private handleContextInject = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const projectName = req.query.project as string;
+    // Support both legacy `project` and new `projects` parameter
+    const projectsParam = (req.query.projects as string) || (req.query.project as string);
     const useColors = req.query.colors === 'true';
 
-    if (!projectName) {
-      this.badRequest(res, 'Project parameter is required');
+    if (!projectsParam) {
+      this.badRequest(res, 'Project(s) parameter is required');
+      return;
+    }
+
+    // Parse comma-separated projects list
+    const projects = projectsParam.split(',').map(p => p.trim()).filter(Boolean);
+
+    if (projects.length === 0) {
+      this.badRequest(res, 'At least one project is required');
       return;
     }
 
     // Import context generator (runs in worker, has access to database)
     const { generateContext } = await import('../../../context-generator.js');
 
-    // Use project name as CWD (generateContext uses path.basename to get project)
-    const cwd = `/context/${projectName}`;
+    // Use first project name as CWD (for display purposes)
+    const primaryProject = projects[projects.length - 1]; // Last is the current/primary project
+    const cwd = `/context/${primaryProject}`;
 
-    // Generate context
+    // Generate context with all projects
     const contextText = await generateContext(
       {
         session_id: 'context-inject-' + Date.now(),
-        cwd: cwd
+        cwd: cwd,
+        projects: projects
       },
       useColors
     );
@@ -344,10 +360,10 @@ export class SearchRoutes extends BaseRouteHandler {
         }
       ],
       examples: [
-        'curl "http://localhost:37778/api/search/observations?query=authentication&limit=5"',
-        'curl "http://localhost:37778/api/search/by-type?type=bugfix&limit=10"',
-        'curl "http://localhost:37778/api/context/recent?project=claude-mem&limit=3"',
-        'curl "http://localhost:37778/api/context/timeline?anchor=123&depth_before=5&depth_after=5"'
+        'curl "http://localhost:37777/api/search/observations?query=authentication&limit=5"',
+        'curl "http://localhost:37777/api/search/by-type?type=bugfix&limit=10"',
+        'curl "http://localhost:37777/api/context/recent?project=claude-mem&limit=3"',
+        'curl "http://localhost:37777/api/context/timeline?anchor=123&depth_before=5&depth_after=5"'
       ]
     });
   });
