@@ -2,12 +2,13 @@
  * Viewer Routes
  *
  * Handles health check, viewer UI, and SSE stream endpoints.
- * These are used by the web viewer UI at http://localhost:37778
+ * These are used by the web viewer UI at http://localhost:37777
  */
 
 import express, { Request, Response } from 'express';
 import path from 'path';
 import { readFileSync, existsSync } from 'fs';
+import { logger } from '../../../../utils/logger.js';
 import { getPackageRoot } from '../../../../shared/paths.js';
 import { SSEBroadcaster } from '../../SSEBroadcaster.js';
 import { DatabaseManager } from '../../DatabaseManager.js';

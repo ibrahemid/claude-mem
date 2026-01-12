@@ -3,8 +3,9 @@
  * Extracted from mcp-server.ts to follow worker service organization pattern
  */
 
-import { ObservationSearchResult, SessionSummarySearchResult, UserPromptSearchResult } from '../sqlite/types.js';
+import type { ObservationSearchResult, SessionSummarySearchResult, UserPromptSearchResult } from '../sqlite/types.js';
 import { ModeManager } from '../domain/ModeManager.js';
+import { logger } from '../../utils/logger.js';
 
 /**
  * Timeline item for unified chronological display

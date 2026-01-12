@@ -7,13 +7,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/smart-install.js\" && node \"${CLAUDE_PLUGIN_ROOT}/scripts/context-hook.js\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/smart-install.js\"",
             "timeout": 300
           },
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/user-message-hook.js\"",
-            "timeout": 10
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/worker-service.cjs\" start",
+            "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/context-hook.js\"",
+            "timeout": 60
           }
         ]
       }
@@ -23,8 +28,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/new-hook.js\"",
-            "timeout": 120
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/worker-service.cjs\" start",
+            "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/new-hook.js\"",
+            "timeout": 60
           }
         ]
       }
@@ -35,7 +45,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/save-hook.js\"",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/worker-service.cjs\" start",
+            "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/save-hook.js\"",
             "timeout": 120
           }
         ]
@@ -46,18 +61,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/summary-hook.js\"",
-            "timeout": 120
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/worker-service.cjs\" start",
+            "timeout": 60
+          },
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/cleanup-hook.js\"",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/summary-hook.js\"",
             "timeout": 120
           }
         ]

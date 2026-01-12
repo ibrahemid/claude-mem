@@ -11,7 +11,6 @@ import { STANDARD_HOOK_RESPONSE } from './hook-response.js';
 import { logger } from '../utils/logger.js';
 import { ensureWorkerRunning, getWorkerPort } from '../shared/worker-utils.js';
 import { HOOK_TIMEOUTS } from '../shared/hook-constants.js';
-import { isProjectExcluded } from '../shared/project-exclusion.js';
 
 export interface PostToolUseInput {
   session_id: string;
@@ -34,11 +33,6 @@ async function saveHook(input?: PostToolUseInput): Promise<void> {
 
   const { session_id, cwd, tool_name, tool_input, tool_response } = input;
 
-  if (isProjectExcluded(cwd)) {
-    console.log(STANDARD_HOOK_RESPONSE);
-    return;
-  }
-
   const port = getWorkerPort();
 
   const toolStr = logger.formatTool(tool_name, tool_input);
@@ -57,13 +51,13 @@ async function saveHook(input?: PostToolUseInput): Promise<void> {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      claudeSessionId: session_id,
+      contentSessionId: session_id,
       tool_name,
       tool_input,
       tool_response,
       cwd
-    }),
-    signal: AbortSignal.timeout(HOOK_TIMEOUTS.DEFAULT)
+    })
+    // Note: Removed signal to avoid Windows Bun cleanup issue (libuv assertion)
   });
 
   if (!response.ok) {
@@ -79,11 +73,17 @@ async function saveHook(input?: PostToolUseInput): Promise<void> {
 let input = '';
 stdin.on('data', (chunk) => input += chunk);
 stdin.on('end', async () => {
-  let parsed: PostToolUseInput | undefined;
   try {
-    parsed = input ? JSON.parse(input) : undefined;
+    let parsed: PostToolUseInput | undefined;
+    try {
+      parsed = input ? JSON.parse(input) : undefined;
+    } catch (error) {
+      throw new Error(`Failed to parse hook input: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    await saveHook(parsed);
   } catch (error) {
-    throw new Error(`Failed to parse hook input: ${error instanceof Error ? error.message : String(error)}`);
+    logger.error('HOOK', 'save-hook failed', {}, error as Error);
+  } finally {
+    process.exit(0);
   }
-  await saveHook(parsed);
 });

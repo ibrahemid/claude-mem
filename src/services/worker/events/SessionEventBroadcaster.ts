@@ -7,6 +7,7 @@
 
 import { SSEBroadcaster } from '../SSEBroadcaster.js';
 import type { WorkerService } from '../../worker-service.js';
+import { logger } from '../../../utils/logger.js';
 
 export class SessionEventBroadcaster {
   constructor(
@@ -20,7 +21,7 @@ export class SessionEventBroadcaster {
    */
   broadcastNewPrompt(prompt: {
     id: number;
-    claude_session_id: string;
+    content_session_id: string;
     project: string;
     prompt_number: number;
     prompt_text: string;

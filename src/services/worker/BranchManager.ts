@@ -2,7 +2,7 @@
  * BranchManager: Git branch detection and switching for beta feature toggle
  *
  * Enables users to switch between stable (main) and beta branches via the UI.
- * The installed plugin at ~/.claude/plugins/marketplaces/ibrahemid/ is a git repo.
+ * The installed plugin at ~/.claude/plugins/marketplaces/thedotmack/ is a git repo.
  */
 
 import { execSync, spawnSync } from 'child_process';
@@ -11,7 +11,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { logger } from '../../utils/logger.js';
 
-const INSTALLED_PLUGIN_PATH = join(homedir(), '.claude', 'plugins', 'marketplaces', 'ibrahemid');
+const INSTALLED_PLUGIN_PATH = join(homedir(), '.claude', 'plugins', 'marketplaces', 'thedotmack');
 
 /**
  * Validate branch name to prevent command injection
@@ -28,9 +28,9 @@ function isValidBranchName(branchName: string): boolean {
   return validBranchRegex.test(branchName) && !branchName.includes('..');
 }
 
-// Timeout constants
-const GIT_COMMAND_TIMEOUT_MS = 30_000;
-const NPM_INSTALL_TIMEOUT_MS = 120_000;
+// Timeout constants (increased for slow systems)
+const GIT_COMMAND_TIMEOUT_MS = 300_000;
+const NPM_INSTALL_TIMEOUT_MS = 600_000;
 const DEFAULT_SHELL_TIMEOUT_MS = 60_000;
 
 export interface BranchInfo {
@@ -191,7 +191,7 @@ export async function switchBranch(targetBranch: string): Promise<SwitchResult> 
       to: targetBranch
     });
 
-    // 1. Discard local changes (safe - user data is at ~/.claude-mem-ibrahemid/)
+    // 1. Discard local changes (safe - user data is at ~/.claude-mem/)
     logger.debug('BRANCH', 'Discarding local changes');
     execGit(['checkout', '--', '.']);
     execGit(['clean', '-fd']); // Remove untracked files too
@@ -204,8 +204,9 @@ export async function switchBranch(targetBranch: string): Promise<SwitchResult> 
     logger.debug('BRANCH', 'Checking out branch', { branch: targetBranch });
     try {
       execGit(['checkout', targetBranch]);
-    } catch {
+    } catch (error) {
       // Branch might not exist locally, try tracking remote
+      logger.debug('BRANCH', 'Branch not local, tracking remote', { branch: targetBranch, error: error instanceof Error ? error.message : String(error) });
       execGit(['checkout', '-b', targetBranch, `origin/${targetBranch}`]);
     }
 
@@ -239,8 +240,9 @@ export async function switchBranch(targetBranch: string): Promise<SwitchResult> 
       if (info.branch && isValidBranchName(info.branch)) {
         execGit(['checkout', info.branch]);
       }
-    } catch {
-      // Recovery failed, user needs manual intervention
+    } catch (recoveryError) {
+      // [POSSIBLY RELEVANT]: Recovery checkout failed, user needs manual intervention - already logging main error above
+      logger.error('BRANCH', 'Recovery checkout also failed', { originalBranch: info.branch }, recoveryError as Error);
     }
 
     return {

@@ -1,29 +1,64 @@
 /**
  * Worker Service - Slim Orchestrator
  *
- * Refactored from 2000-line monolith to ~150-line orchestrator.
- * Routes organized by feature area in http/routes/*.ts
- * See src/services/worker/README.md for architecture details.
+ * Refactored from 2000-line monolith to ~300-line orchestrator.
+ * Delegates to specialized modules:
+ * - src/services/server/ - HTTP server, middleware, error handling
+ * - src/services/infrastructure/ - Process management, health monitoring, shutdown
+ * - src/services/integrations/ - IDE integrations (Cursor)
+ * - src/services/worker/ - Business logic, routes, agents
  */
 
-import express from 'express';
-import http from 'http';
 import path from 'path';
 import * as fs from 'fs';
+import { spawn } from 'child_process';
+import { homedir } from 'os';
+import { existsSync, writeFileSync, readFileSync, mkdirSync } from 'fs';
+import * as readline from 'readline';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { getWorkerPort, getWorkerHost } from '../shared/worker-utils.js';
 import { logger } from '../utils/logger.js';
-import { exec, execSync } from 'child_process';
-import { promisify } from 'util';
 
-const execAsync = promisify(exec);
+// Infrastructure imports
+import {
+  writePidFile,
+  readPidFile,
+  removePidFile,
+  getPlatformTimeout,
+  cleanupOrphanedProcesses,
+  spawnDaemon,
+  createSignalHandler
+} from './infrastructure/ProcessManager.js';
+import {
+  isPortInUse,
+  waitForHealth,
+  waitForPortFree,
+  httpShutdown,
+  checkVersionMatch
+} from './infrastructure/HealthMonitor.js';
+import { performGracefulShutdown } from './infrastructure/GracefulShutdown.js';
 
-// Import composed service layer
+// Server imports
+import { Server } from './server/Server.js';
+
+// Integration imports
+import {
+  updateCursorContextForProject,
+  handleCursorCommand,
+  detectClaudeCode,
+  findCursorHooksDir,
+  installCursorHooks,
+  configureCursorMcp
+} from './integrations/CursorHooksInstaller.js';
+
+// Service layer imports
 import { DatabaseManager } from './worker/DatabaseManager.js';
 import { SessionManager } from './worker/SessionManager.js';
 import { SSEBroadcaster } from './worker/SSEBroadcaster.js';
 import { SDKAgent } from './worker/SDKAgent.js';
+import { GeminiAgent } from './worker/GeminiAgent.js';
+import { OpenRouterAgent } from './worker/OpenRouterAgent.js';
 import { PaginationHelper } from './worker/PaginationHelper.js';
 import { SettingsManager } from './worker/SettingsManager.js';
 import { SearchManager } from './worker/SearchManager.js';
@@ -31,47 +66,46 @@ import { FormattingService } from './worker/FormattingService.js';
 import { TimelineService } from './worker/TimelineService.js';
 import { SessionEventBroadcaster } from './worker/events/SessionEventBroadcaster.js';
 
-// Import HTTP layer
-import { createMiddleware, summarizeRequestBody as summarizeBody, requireLocalhost } from './worker/http/middleware.js';
+// HTTP route handlers
 import { ViewerRoutes } from './worker/http/routes/ViewerRoutes.js';
 import { SessionRoutes } from './worker/http/routes/SessionRoutes.js';
 import { DataRoutes } from './worker/http/routes/DataRoutes.js';
 import { SearchRoutes } from './worker/http/routes/SearchRoutes.js';
 import { SettingsRoutes } from './worker/http/routes/SettingsRoutes.js';
+import { LogsRoutes } from './worker/http/routes/LogsRoutes.js';
+
+// Re-export updateCursorContextForProject for SDK agents
+export { updateCursorContextForProject };
 
 export class WorkerService {
-  private app: express.Application;
-  private server: http.Server | null = null;
+  private server: Server;
   private startTime: number = Date.now();
   private mcpClient: Client;
 
-  // Initialization flags for MCP/SDK readiness tracking
+  // Initialization flags
   private mcpReady: boolean = false;
   private initializationCompleteFlag: boolean = false;
+  private isShuttingDown: boolean = false;
 
   // Service layer
   private dbManager: DatabaseManager;
   private sessionManager: SessionManager;
   private sseBroadcaster: SSEBroadcaster;
   private sdkAgent: SDKAgent;
+  private geminiAgent: GeminiAgent;
+  private openRouterAgent: OpenRouterAgent;
   private paginationHelper: PaginationHelper;
   private settingsManager: SettingsManager;
   private sessionEventBroadcaster: SessionEventBroadcaster;
 
   // Route handlers
-  private viewerRoutes: ViewerRoutes;
-  private sessionRoutes: SessionRoutes;
-  private dataRoutes: DataRoutes;
-  private searchRoutes: SearchRoutes | null;
-  private settingsRoutes: SettingsRoutes;
+  private searchRoutes: SearchRoutes | null = null;
 
   // Initialization tracking
   private initializationComplete: Promise<void>;
   private resolveInitialization!: () => void;
 
   constructor() {
-    this.app = express();
-
     // Initialize the promise that will resolve when background initialization completes
     this.initializationComplete = new Promise((resolve) => {
       this.resolveInitialization = resolve;
@@ -82,11 +116,15 @@ export class WorkerService {
     this.sessionManager = new SessionManager(this.dbManager);
     this.sseBroadcaster = new SSEBroadcaster();
     this.sdkAgent = new SDKAgent(this.dbManager, this.sessionManager);
+    this.geminiAgent = new GeminiAgent(this.dbManager, this.sessionManager);
+    this.geminiAgent.setFallbackAgent(this.sdkAgent);
+    this.openRouterAgent = new OpenRouterAgent(this.dbManager, this.sessionManager);
+    this.openRouterAgent.setFallbackAgent(this.sdkAgent);
     this.paginationHelper = new PaginationHelper(this.dbManager);
     this.settingsManager = new SettingsManager(this.dbManager);
     this.sessionEventBroadcaster = new SessionEventBroadcaster(this.sseBroadcaster, this);
 
-    // Set callback for when sessions are deleted (to update activity indicator)
+    // Set callback for when sessions are deleted
     this.sessionManager.setOnSessionDeleted(() => {
       this.broadcastProcessingStatus();
     });
@@ -97,307 +135,76 @@ export class WorkerService {
       version: '1.0.0'
     }, { capabilities: {} });
 
-    // Initialize route handlers (SearchRoutes will use MCP client initially, then switch to SearchManager after DB init)
-    this.viewerRoutes = new ViewerRoutes(this.sseBroadcaster, this.dbManager, this.sessionManager);
-    this.sessionRoutes = new SessionRoutes(this.sessionManager, this.dbManager, this.sdkAgent, this.sessionEventBroadcaster, this);
-    this.dataRoutes = new DataRoutes(this.paginationHelper, this.dbManager, this.sessionManager, this.sseBroadcaster, this, this.startTime);
-    // SearchRoutes needs SearchManager which requires initialized DB - will be created in initializeBackground()
-    this.searchRoutes = null;
-    this.settingsRoutes = new SettingsRoutes(this.settingsManager);
+    // Initialize HTTP server with core routes
+    this.server = new Server({
+      getInitializationComplete: () => this.initializationCompleteFlag,
+      getMcpReady: () => this.mcpReady,
+      onShutdown: () => this.shutdown(),
+      onRestart: () => this.shutdown()
+    });
 
-    this.setupMiddleware();
-    this.setupRoutes();
+    // Register route handlers
+    this.registerRoutes();
+
+    // Register signal handlers early to ensure cleanup even if start() hasn't completed
+    this.registerSignalHandlers();
   }
 
   /**
-   * Setup Express middleware
+   * Register signal handlers for graceful shutdown
    */
-  private setupMiddleware(): void {
-    const middlewares = createMiddleware(this.summarizeRequestBody.bind(this));
-    middlewares.forEach(mw => this.app.use(mw));
+  private registerSignalHandlers(): void {
+    const shutdownRef = { value: this.isShuttingDown };
+    const handler = createSignalHandler(() => this.shutdown(), shutdownRef);
+
+    process.on('SIGTERM', () => {
+      this.isShuttingDown = shutdownRef.value;
+      handler('SIGTERM');
+    });
+    process.on('SIGINT', () => {
+      this.isShuttingDown = shutdownRef.value;
+      handler('SIGINT');
+    });
   }
 
   /**
-   * Setup HTTP routes (delegate to route classes)
+   * Register all route handlers with the server
    */
-  private setupRoutes(): void {
-    // Health check endpoint
-    // TEST_BUILD_ID helps verify which build is running during debugging
-    const TEST_BUILD_ID = 'TEST-008-wrapper-ipc';
-    this.app.get('/api/health', (_req, res) => {
-      res.status(200).json({
-        status: 'ok',
-        build: TEST_BUILD_ID,
-        managed: process.env.CLAUDE_MEM_MANAGED === 'true',
-        hasIpc: typeof process.send === 'function',
-        platform: process.platform,
-        pid: process.pid,
-        initialized: this.initializationCompleteFlag,
-        mcpReady: this.mcpReady,
-      });
-    });
+  private registerRoutes(): void {
+    // Standard routes
+    this.server.registerRoutes(new ViewerRoutes(this.sseBroadcaster, this.dbManager, this.sessionManager));
+    this.server.registerRoutes(new SessionRoutes(this.sessionManager, this.dbManager, this.sdkAgent, this.geminiAgent, this.openRouterAgent, this.sessionEventBroadcaster, this));
+    this.server.registerRoutes(new DataRoutes(this.paginationHelper, this.dbManager, this.sessionManager, this.sseBroadcaster, this, this.startTime));
+    this.server.registerRoutes(new SettingsRoutes(this.settingsManager));
+    this.server.registerRoutes(new LogsRoutes());
 
-    // Readiness check endpoint - returns 503 until full initialization completes
-    // Used by ProcessManager and worker-utils to ensure worker is fully ready before routing requests
-    this.app.get('/api/readiness', (_req, res) => {
-      if (this.initializationCompleteFlag) {
-        res.status(200).json({
-          status: 'ready',
-          mcpReady: this.mcpReady,
-        });
-      } else {
-        res.status(503).json({
-          status: 'initializing',
-          message: 'Worker is still initializing, please retry',
-        });
-      }
-    });
+    // Early handler for /api/context/inject to avoid 404 during startup
+    this.server.app.get('/api/context/inject', async (req, res, next) => {
+      const timeoutMs = 300000; // 5 minute timeout for slow systems
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Initialization timeout')), timeoutMs)
+      );
 
-    // Version endpoint - returns the worker's current version
-    this.app.get('/api/version', (_req, res) => {
-      const { homedir } = require('os');
-      const { readFileSync } = require('fs');
-      const marketplaceRoot = path.join(homedir(), '.claude', 'plugins', 'marketplaces', 'ibrahemid');
-      const packageJsonPath = path.join(marketplaceRoot, 'package.json');
+      await Promise.race([this.initializationComplete, timeoutPromise]);
 
-      // Read version from marketplace package.json
-      const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
-      res.status(200).json({ version: packageJson.version });
-    });
-
-    // Instructions endpoint - loads SKILL.md sections on-demand for progressive instruction loading
-    this.app.get('/api/instructions', async (req, res) => {
-      const topic = (req.query.topic as string) || 'all';
-      const operation = req.query.operation as string | undefined;
-
-      // Path resolution: __dirname is build output directory (plugin/scripts/)
-      // SKILL.md is at plugin/skills/mem-search/SKILL.md
-      // Operations are at plugin/skills/mem-search/operations/*.md
-
-      try {
-        let content: string;
-
-        if (operation) {
-          // Load specific operation file
-          const operationPath = path.join(__dirname, '../skills/mem-search/operations', `${operation}.md`);
-          content = await fs.promises.readFile(operationPath, 'utf-8');
-        } else {
-          // Load SKILL.md and extract section based on topic (backward compatibility)
-          const skillPath = path.join(__dirname, '../skills/mem-search/SKILL.md');
-          const fullContent = await fs.promises.readFile(skillPath, 'utf-8');
-          content = this.extractInstructionSection(fullContent, topic);
-        }
-
-        // Return in MCP format
-        res.json({
-          content: [{
-            type: 'text',
-            text: content
-          }]
-        });
-      } catch (error) {
-        logger.error('WORKER', 'Failed to load instructions', { topic, operation }, error as Error);
-        res.status(500).json({
-          content: [{
-            type: 'text',
-            text: `Error loading instructions: ${error instanceof Error ? error.message : 'Unknown error'}`
-          }],
-          isError: true
-        });
-      }
-    });
-
-    // Admin endpoints for process management (localhost-only)
-    this.app.post('/api/admin/restart', requireLocalhost, async (_req, res) => {
-      res.json({ status: 'restarting' });
-
-      // On Windows, if managed by wrapper, send message to parent to handle restart
-      // This solves the Windows zombie port problem where sockets aren't properly released
-      const isWindowsManaged = process.platform === 'win32' &&
-        process.env.CLAUDE_MEM_MANAGED === 'true' &&
-        process.send;
-
-      if (isWindowsManaged) {
-        logger.info('SYSTEM', 'Sending restart request to wrapper');
-        process.send!({ type: 'restart' });
-      } else {
-        // Unix or standalone Windows - handle restart ourselves
-        setTimeout(async () => {
-          await this.shutdown();
-          process.exit(0);
-        }, 100);
-      }
-    });
-
-    this.app.post('/api/admin/shutdown', requireLocalhost, async (_req, res) => {
-      res.json({ status: 'shutting_down' });
-
-      // On Windows, if managed by wrapper, send message to parent to handle shutdown
-      const isWindowsManaged = process.platform === 'win32' &&
-        process.env.CLAUDE_MEM_MANAGED === 'true' &&
-        process.send;
-
-      if (isWindowsManaged) {
-        logger.info('SYSTEM', 'Sending shutdown request to wrapper');
-        process.send!({ type: 'shutdown' });
-      } else {
-        // Unix or standalone Windows - handle shutdown ourselves
-        setTimeout(async () => {
-          await this.shutdown();
-          process.exit(0);
-        }, 100);
-      }
-    });
-
-    this.viewerRoutes.setupRoutes(this.app);
-    this.sessionRoutes.setupRoutes(this.app);
-    this.dataRoutes.setupRoutes(this.app);
-    // searchRoutes is set up after database initialization in initializeBackground()
-    this.settingsRoutes.setupRoutes(this.app);
-
-    // Register early handler for /api/context/inject to avoid 404 during startup
-    // This handler waits for initialization to complete before delegating to SearchRoutes
-    // NOTE: This duplicates logic from SearchRoutes.handleContextInject by design,
-    // as we need the route available immediately before SearchRoutes is initialized
-    this.app.get('/api/context/inject', async (req, res, next) => {
-      try {
-        // Wait for initialization to complete (with timeout)
-        const timeoutMs = 30000; // 30 second timeout
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Initialization timeout')), timeoutMs)
-        );
-        
-        await Promise.race([this.initializationComplete, timeoutPromise]);
-
-        // If searchRoutes is still null after initialization, something went wrong
-        if (!this.searchRoutes) {
-          res.status(503).json({ error: 'Search routes not initialized' });
-          return;
-        }
-
-        // Delegate to the proper handler by re-processing the request
-        // Since we're already in the middleware chain, we need to call the handler directly
-        const projectName = req.query.project as string;
-        const useColors = req.query.colors === 'true';
-
-        if (!projectName) {
-          res.status(400).json({ error: 'Project parameter is required' });
-          return;
-        }
-
-        // Import context generator (runs in worker, has access to database)
-        const { generateContext } = await import('./context-generator.js');
-
-        // Use project name as CWD (generateContext uses path.basename to get project)
-        const cwd = `/context/${projectName}`;
-
-        // Generate context
-        const contextText = await generateContext(
-          {
-            session_id: 'context-inject-' + Date.now(),
-            cwd: cwd
-          },
-          useColors
-        );
-
-        // Return as plain text
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.send(contextText);
-      } catch (error) {
-        logger.error('WORKER', 'Context inject handler failed', {}, error as Error);
-        res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
-      }
-    });
-  }
-
-
-  /**
-   * Clean up orphaned chroma-mcp processes from previous worker sessions
-   * Prevents process accumulation and memory leaks
-   */
-  private async cleanupOrphanedProcesses(): Promise<void> {
-    const isWindows = process.platform === 'win32';
-    const pids: number[] = [];
-
-    if (isWindows) {
-      // Windows: Use PowerShell Get-CimInstance to find chroma-mcp processes
-      const cmd = `powershell -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -like '*python*' -and $_.CommandLine -like '*chroma-mcp*' } | Select-Object -ExpandProperty ProcessId"`;
-      const { stdout } = await execAsync(cmd, { timeout: 5000 });
-
-      if (!stdout.trim()) {
-        logger.debug('SYSTEM', 'No orphaned chroma-mcp processes found (Windows)');
+      if (!this.searchRoutes) {
+        res.status(503).json({ error: 'Search routes not initialized' });
         return;
       }
 
-      const pidStrings = stdout.trim().split('\n');
-      for (const pidStr of pidStrings) {
-        const pid = parseInt(pidStr.trim(), 10);
-        // SECURITY: Validate PID is positive integer before adding to list
-        if (!isNaN(pid) && Number.isInteger(pid) && pid > 0) {
-          pids.push(pid);
-        }
-      }
-    } else {
-      // Unix: Use ps aux | grep
-      const { stdout } = await execAsync('ps aux | grep "chroma-mcp" | grep -v grep || true');
-
-      if (!stdout.trim()) {
-        logger.debug('SYSTEM', 'No orphaned chroma-mcp processes found (Unix)');
-        return;
-      }
-
-      const lines = stdout.trim().split('\n');
-      for (const line of lines) {
-        const parts = line.trim().split(/\s+/);
-        if (parts.length > 1) {
-          const pid = parseInt(parts[1], 10);
-          // SECURITY: Validate PID is positive integer before adding to list
-          if (!isNaN(pid) && Number.isInteger(pid) && pid > 0) {
-            pids.push(pid);
-          }
-        }
-      }
-    }
-
-    if (pids.length === 0) {
-      return;
-    }
-
-    logger.info('SYSTEM', 'Cleaning up orphaned chroma-mcp processes', {
-      platform: isWindows ? 'Windows' : 'Unix',
-      count: pids.length,
-      pids
+      next(); // Delegate to SearchRoutes handler
     });
-
-    // Kill all found processes
-    if (isWindows) {
-      for (const pid of pids) {
-        // SECURITY: Double-check PID validation before using in taskkill command
-        if (!Number.isInteger(pid) || pid <= 0) {
-          logger.warn('SYSTEM', 'Skipping invalid PID', { pid });
-          continue;
-        }
-        execSync(`taskkill /PID ${pid} /T /F`, { timeout: 5000, stdio: 'ignore' });
-      }
-    } else {
-      await execAsync(`kill ${pids.join(' ')}`);
-    }
-
-    logger.info('SYSTEM', 'Orphaned processes cleaned up', { count: pids.length });
   }
 
   /**
    * Start the worker service
    */
   async start(): Promise<void> {
-    // Start HTTP server FIRST - make port available immediately
     const port = getWorkerPort();
     const host = getWorkerHost();
-    this.server = await new Promise<http.Server>((resolve, reject) => {
-      const srv = this.app.listen(port, host, () => resolve(srv));
-      srv.on('error', reject);
-    });
 
+    // Start HTTP server FIRST - make port available immediately
+    await this.server.listen(port, host);
     logger.info('SYSTEM', 'Worker started', { host, port, pid: process.pid });
 
     // Do slow initialization in background (non-blocking)
@@ -411,10 +218,9 @@ export class WorkerService {
    */
   private async initializeBackground(): Promise<void> {
     try {
-      // Clean up any orphaned chroma-mcp processes BEFORE starting our own
-      await this.cleanupOrphanedProcesses();
+      await cleanupOrphanedProcesses();
 
-      // Load mode configuration (must happen before database to set observation types)
+      // Load mode configuration
       const { ModeManager } = await import('./domain/ModeManager.js');
       const { SettingsDefaultsManager } = await import('../shared/SettingsDefaultsManager.js');
       const { USER_SETTINGS_PATH } = await import('../shared/paths.js');
@@ -424,10 +230,18 @@ export class WorkerService {
       ModeManager.getInstance().loadMode(modeId);
       logger.info('SYSTEM', `Mode loaded: ${modeId}`);
 
-      // Initialize database (once, stays open)
       await this.dbManager.initialize();
 
-      // Initialize search services (requires initialized database)
+      // Recover stuck messages from previous crashes
+      const { PendingMessageStore } = await import('./sqlite/PendingMessageStore.js');
+      const pendingStore = new PendingMessageStore(this.dbManager.getSessionStore().db, 3);
+      const STUCK_THRESHOLD_MS = 5 * 60 * 1000;
+      const resetCount = pendingStore.resetStuckMessages(STUCK_THRESHOLD_MS);
+      if (resetCount > 0) {
+        logger.info('SYSTEM', `Recovered ${resetCount} stuck messages from previous session`, { thresholdMinutes: 5 });
+      }
+
+      // Initialize search services
       const formattingService = new FormattingService();
       const timelineService = new TimelineService();
       const searchManager = new SearchManager(
@@ -438,10 +252,10 @@ export class WorkerService {
         timelineService
       );
       this.searchRoutes = new SearchRoutes(searchManager);
-      this.searchRoutes.setupRoutes(this.app); // Setup search routes now that SearchManager is ready
+      this.server.registerRoutes(this.searchRoutes);
       logger.info('WORKER', 'SearchManager initialized and search routes registered');
 
-      // Connect to MCP server with timeout guard
+      // Connect to MCP server
       const mcpServerPath = path.join(__dirname, 'mcp-server.cjs');
       const transport = new StdioClientTransport({
         command: 'node',
@@ -449,189 +263,135 @@ export class WorkerService {
         env: process.env
       });
 
-      // Add timeout guard to prevent hanging on MCP connection (15 seconds)
-      const MCP_INIT_TIMEOUT_MS = 15000;
+      const MCP_INIT_TIMEOUT_MS = 300000;
       const mcpConnectionPromise = this.mcpClient.connect(transport);
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('MCP connection timeout after 15s')), MCP_INIT_TIMEOUT_MS)
+        setTimeout(() => reject(new Error('MCP connection timeout after 5 minutes')), MCP_INIT_TIMEOUT_MS)
       );
 
       await Promise.race([mcpConnectionPromise, timeoutPromise]);
       this.mcpReady = true;
       logger.success('WORKER', 'Connected to MCP server');
 
-      // Signal that initialization is complete
       this.initializationCompleteFlag = true;
       this.resolveInitialization();
       logger.info('SYSTEM', 'Background initialization complete');
+
+      // Auto-recover orphaned queues (fire-and-forget with error logging)
+      this.processPendingQueues(50).then(result => {
+        if (result.sessionsStarted > 0) {
+          logger.info('SYSTEM', `Auto-recovered ${result.sessionsStarted} sessions with pending work`, {
+            totalPending: result.totalPendingSessions,
+            started: result.sessionsStarted,
+            sessionIds: result.startedSessionIds
+          });
+        }
+      }).catch(error => {
+        logger.error('SYSTEM', 'Auto-recovery of pending queues failed', {}, error as Error);
+      });
     } catch (error) {
       logger.error('SYSTEM', 'Background initialization failed', {}, error as Error);
-      // Don't resolve - let the promise remain pending so readiness check continues to fail
       throw error;
     }
   }
 
   /**
-   * Extract a specific section from instruction content
-   * Used by /api/instructions endpoint for progressive instruction loading
+   * Start a session processor
    */
-  private extractInstructionSection(content: string, topic: string): string {
-    const sections: Record<string, string> = {
-      'workflow': this.extractBetween(content, '## The Workflow', '## Search Parameters'),
-      'search_params': this.extractBetween(content, '## Search Parameters', '## Examples'),
-      'examples': this.extractBetween(content, '## Examples', '## Why This Workflow'),
-      'all': content
-    };
+  private startSessionProcessor(
+    session: ReturnType<typeof this.sessionManager.getSession>,
+    source: string
+  ): void {
+    if (!session) return;
 
-    return sections[topic] || sections['all'];
+    const sid = session.sessionDbId;
+    logger.info('SYSTEM', `Starting generator (${source})`, { sessionId: sid });
+
+    session.generatorPromise = this.sdkAgent.startSession(session, this)
+      .catch(error => {
+        logger.error('SDK', 'Session generator failed', {
+          sessionId: session.sessionDbId,
+          project: session.project
+        }, error as Error);
+      })
+      .finally(() => {
+        session.generatorPromise = null;
+        this.broadcastProcessingStatus();
+      });
   }
 
   /**
-   * Extract text between two markers
-   * Helper for extractInstructionSection
+   * Process pending session queues
    */
-  private extractBetween(content: string, startMarker: string, endMarker: string): string {
-    const startIdx = content.indexOf(startMarker);
-    const endIdx = content.indexOf(endMarker);
+  async processPendingQueues(sessionLimit: number = 10): Promise<{
+    totalPendingSessions: number;
+    sessionsStarted: number;
+    sessionsSkipped: number;
+    startedSessionIds: number[];
+  }> {
+    const { PendingMessageStore } = await import('./sqlite/PendingMessageStore.js');
+    const pendingStore = new PendingMessageStore(this.dbManager.getSessionStore().db, 3);
+    const orphanedSessionIds = pendingStore.getSessionsWithPendingMessages();
 
-    if (startIdx === -1) return content;
-    if (endIdx === -1) return content.substring(startIdx);
+    const result = {
+      totalPendingSessions: orphanedSessionIds.length,
+      sessionsStarted: 0,
+      sessionsSkipped: 0,
+      startedSessionIds: [] as number[]
+    };
 
-    return content.substring(startIdx, endIdx).trim();
+    if (orphanedSessionIds.length === 0) return result;
+
+    logger.info('SYSTEM', `Processing up to ${sessionLimit} of ${orphanedSessionIds.length} pending session queues`);
+
+    for (const sessionDbId of orphanedSessionIds) {
+      if (result.sessionsStarted >= sessionLimit) break;
+
+      try {
+        const existingSession = this.sessionManager.getSession(sessionDbId);
+        if (existingSession?.generatorPromise) {
+          result.sessionsSkipped++;
+          continue;
+        }
+
+        const session = this.sessionManager.initializeSession(sessionDbId);
+        logger.info('SYSTEM', `Starting processor for session ${sessionDbId}`, {
+          project: session.project,
+          pendingCount: pendingStore.getPendingCount(sessionDbId)
+        });
+
+        this.startSessionProcessor(session, 'startup-recovery');
+        result.sessionsStarted++;
+        result.startedSessionIds.push(sessionDbId);
+
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (error) {
+        logger.error('SYSTEM', `Failed to process session ${sessionDbId}`, {}, error as Error);
+        result.sessionsSkipped++;
+      }
+    }
+
+    return result;
   }
 
   /**
    * Shutdown the worker service
-   *
-   * IMPORTANT: On Windows, we must kill all child processes before exiting
-   * to prevent zombie ports. The socket handle can be inherited by children,
-   * and if not properly closed, the port stays bound after process death.
    */
   async shutdown(): Promise<void> {
-    logger.info('SYSTEM', 'Shutdown initiated');
-
-    // STEP 1: Enumerate all child processes BEFORE we start closing things
-    const childPids = await this.getChildProcesses(process.pid);
-    logger.info('SYSTEM', 'Found child processes', { count: childPids.length, pids: childPids });
-
-    // STEP 2: Close HTTP server first
-    if (this.server) {
-      this.server.closeAllConnections();
-      await new Promise<void>((resolve, reject) => {
-        this.server!.close(err => err ? reject(err) : resolve());
-      });
-      this.server = null;
-      logger.info('SYSTEM', 'HTTP server closed');
-    }
-
-    // STEP 3: Shutdown active sessions
-    await this.sessionManager.shutdownAll();
-
-    // STEP 4: Close MCP client connection (signals child to exit gracefully)
-    if (this.mcpClient) {
-      await this.mcpClient.close();
-      logger.info('SYSTEM', 'MCP client closed');
-    }
-
-    // STEP 5: Close database connection (includes ChromaSync cleanup)
-    await this.dbManager.close();
-
-    // STEP 6: Force kill any remaining child processes (Windows zombie port fix)
-    if (childPids.length > 0) {
-      logger.info('SYSTEM', 'Force killing remaining children');
-      for (const pid of childPids) {
-        await this.forceKillProcess(pid);
-      }
-      // Wait for children to fully exit
-      await this.waitForProcessesExit(childPids, 5000);
-    }
-
-    logger.info('SYSTEM', 'Worker shutdown complete');
-  }
-
-  /**
-   * Get all child process PIDs (Windows-specific)
-   */
-  private async getChildProcesses(parentPid: number): Promise<number[]> {
-    if (process.platform !== 'win32') {
-      return [];
-    }
-
-    // SECURITY: Validate PID is a positive integer to prevent command injection
-    if (!Number.isInteger(parentPid) || parentPid <= 0) {
-      logger.warn('SYSTEM', 'Invalid parent PID for child process enumeration', { parentPid });
-      return [];
-    }
-
-    const cmd = `powershell -Command "Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq ${parentPid} } | Select-Object -ExpandProperty ProcessId"`;
-    const { stdout } = await execAsync(cmd, { timeout: 5000 });
-    return stdout
-      .trim()
-      .split('\n')
-      .map(s => parseInt(s.trim(), 10))
-      .filter(n => !isNaN(n) && Number.isInteger(n) && n > 0); // SECURITY: Validate each PID
-  }
-
-  /**
-   * Force kill a process by PID (Windows: uses taskkill /F /T)
-   */
-  private async forceKillProcess(pid: number): Promise<void> {
-    // SECURITY: Validate PID is a positive integer to prevent command injection
-    if (!Number.isInteger(pid) || pid <= 0) {
-      logger.warn('SYSTEM', 'Invalid PID for force kill', { pid });
-      return;
-    }
-
-    if (process.platform === 'win32') {
-      // /T kills entire process tree, /F forces termination
-      await execAsync(`taskkill /PID ${pid} /T /F`, { timeout: 5000 });
-      logger.info('SYSTEM', 'Killed process', { pid });
-    } else {
-      process.kill(pid, 'SIGKILL');
-    }
-  }
-
-  /**
-   * Wait for processes to fully exit
-   */
-  private async waitForProcessesExit(pids: number[], timeoutMs: number): Promise<void> {
-    const start = Date.now();
-
-    while (Date.now() - start < timeoutMs) {
-      const stillAlive = pids.filter(pid => {
-        process.kill(pid, 0); // Signal 0 checks if process exists - throws if dead
-        return true;
-      });
-
-      if (stillAlive.length === 0) {
-        logger.info('SYSTEM', 'All child processes exited');
-        return;
-      }
-
-      logger.debug('SYSTEM', 'Waiting for processes to exit', { stillAlive });
-      await new Promise(r => setTimeout(r, 100));
-    }
-
-    logger.warn('SYSTEM', 'Timeout waiting for child processes to exit');
-  }
-
-  /**
-   * Summarize request body for logging
-   * Used to avoid logging sensitive data or large payloads
-   */
-  private summarizeRequestBody(method: string, path: string, body: any): string {
-    return summarizeBody(method, path, body);
+    await performGracefulShutdown({
+      server: this.server.getHttpServer(),
+      sessionManager: this.sessionManager,
+      mcpClient: this.mcpClient,
+      dbManager: this.dbManager
+    });
   }
 
   /**
    * Broadcast processing status change to SSE clients
-   * Checks both queue depth and active generators to prevent premature spinner stop
-   *
-   * PUBLIC: Called by route handlers (SessionRoutes, DataRoutes)
    */
   broadcastProcessingStatus(): void {
     const isProcessing = this.sessionManager.isAnySessionProcessing();
-    const queueDepth = this.sessionManager.getTotalActiveWork(); // Includes queued + actively processing
+    const queueDepth = this.sessionManager.getTotalActiveWork();
     const activeSessions = this.sessionManager.getActiveSessionCount();
 
     logger.info('WORKER', 'Broadcasting processing status', {
@@ -649,31 +409,351 @@ export class WorkerService {
 }
 
 // ============================================================================
-// Main Entry Point
+// Interactive Setup Wizard
 // ============================================================================
 
-/**
- * Start the worker service (if running as main module)
- * Note: Using require.main check for CJS compatibility (build outputs CJS)
- */
-if (require.main === module || !module.parent) {
-  const worker = new WorkerService();
-
-  // Graceful shutdown
-  process.on('SIGTERM', async () => {
-    logger.info('SYSTEM', 'Received SIGTERM, shutting down gracefully');
-    await worker.shutdown();
-    process.exit(0);
+async function runInteractiveSetup(): Promise<number> {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
   });
 
-  process.on('SIGINT', async () => {
-    logger.info('SYSTEM', 'Received SIGINT, shutting down gracefully');
-    await worker.shutdown();
-    process.exit(0);
-  });
+  const question = (prompt: string): Promise<string> => {
+    return new Promise(resolve => rl.question(prompt, resolve));
+  };
 
-  worker.start().catch((error) => {
-    logger.failure('SYSTEM', 'Worker failed to start', {}, error as Error);
-    process.exit(1);
-  });
+  console.log(`
+╔══════════════════════════════════════════════════════════════════╗
+║           Claude-Mem Cursor Setup Wizard                         ║
+║                                                                  ║
+║  This wizard will guide you through setting up claude-mem        ║
+║  for use with Cursor IDE.                                        ║
+╚══════════════════════════════════════════════════════════════════╝
+`);
+
+  try {
+    console.log('Step 1: Checking environment...\n');
+
+    const hasClaudeCode = await detectClaudeCode();
+    const settingsPath = path.join(homedir(), '.claude-mem', 'settings.json');
+    let settings: Record<string, unknown> = {};
+
+    if (existsSync(settingsPath)) {
+      try {
+        settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+      } catch (error) {
+        logger.debug('SETUP', 'Corrupt settings file, starting fresh', { path: settingsPath }, error as Error);
+      }
+    }
+
+    const currentProvider = settings['CLAUDE_MEM_PROVIDER'] as string || (hasClaudeCode ? 'claude-sdk' : 'none');
+
+    if (hasClaudeCode) {
+      console.log('Claude Code detected\n');
+    } else {
+      console.log('Claude Code not detected\n');
+    }
+
+    console.log(`Current provider: ${currentProvider}\n`);
+
+    console.log('Step 2: Choose AI Provider\n');
+    if (hasClaudeCode) {
+      console.log('  [1] Claude SDK (Recommended - uses your Claude Code subscription)');
+    } else {
+      console.log('  [1] Claude SDK (requires Claude Code subscription)');
+    }
+    console.log('  [2] Gemini (1500 free requests/day)');
+    console.log('  [3] OpenRouter (100+ models, some free)');
+    console.log('  [4] Keep current settings\n');
+
+    const providerChoice = await question('Enter choice [1-4]: ');
+
+    if (providerChoice === '1') {
+      settings['CLAUDE_MEM_PROVIDER'] = 'claude-sdk';
+      mkdirSync(path.dirname(settingsPath), { recursive: true });
+      writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+      console.log('\nClaude SDK configured!\n');
+    } else if (providerChoice === '2') {
+      console.log('\nConfiguring Gemini...\n');
+      console.log('   Get your free API key at: https://aistudio.google.com/apikey\n');
+
+      const apiKey = await question('Enter your Gemini API key: ');
+      if (apiKey.trim()) {
+        settings['CLAUDE_MEM_PROVIDER'] = 'gemini';
+        settings['CLAUDE_MEM_GEMINI_API_KEY'] = apiKey.trim();
+        mkdirSync(path.dirname(settingsPath), { recursive: true });
+        writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+        console.log('\nGemini configured successfully!\n');
+      } else {
+        console.log('\nNo API key provided. You can add it later in ~/.claude-mem/settings.json\n');
+      }
+    } else if (providerChoice === '3') {
+      console.log('\nConfiguring OpenRouter...\n');
+      console.log('   Get your API key at: https://openrouter.ai/keys\n');
+
+      const apiKey = await question('Enter your OpenRouter API key: ');
+      if (apiKey.trim()) {
+        settings['CLAUDE_MEM_PROVIDER'] = 'openrouter';
+        settings['CLAUDE_MEM_OPENROUTER_API_KEY'] = apiKey.trim();
+        mkdirSync(path.dirname(settingsPath), { recursive: true });
+        writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+        console.log('\nOpenRouter configured successfully!\n');
+      } else {
+        console.log('\nNo API key provided. You can add it later in ~/.claude-mem/settings.json\n');
+      }
+    } else {
+      console.log('\nKeeping current settings.\n');
+    }
+
+    console.log('Step 3: Choose installation scope\n');
+    console.log('  [1] Project (current directory only) - Recommended');
+    console.log('  [2] User (all projects for current user)');
+    console.log('  [3] Skip hook installation\n');
+
+    const scopeChoice = await question('Enter choice [1-3]: ');
+
+    let installTarget: string | null = null;
+    if (scopeChoice === '1') {
+      installTarget = 'project';
+    } else if (scopeChoice === '2') {
+      installTarget = 'user';
+    } else {
+      console.log('\nSkipping hook installation.\n');
+    }
+
+    if (installTarget) {
+      console.log(`Step 4: Installing Cursor hooks (${installTarget})...\n`);
+
+      const cursorHooksDir = findCursorHooksDir();
+      if (!cursorHooksDir) {
+        console.error('Could not find cursor-hooks directory');
+        console.error('   Make sure you ran npm run build first.');
+        rl.close();
+        return 1;
+      }
+
+      const installResult = await installCursorHooks(cursorHooksDir, installTarget as 'project' | 'user');
+      if (installResult !== 0) {
+        rl.close();
+        return installResult;
+      }
+
+      console.log('\nStep 5: Configuring MCP server for memory search...\n');
+      const mcpResult = configureCursorMcp(installTarget as 'project' | 'user');
+      if (mcpResult !== 0) {
+        console.warn('MCP configuration failed, but hooks are installed.');
+        console.warn('   You can manually configure MCP later.\n');
+      } else {
+        console.log('');
+      }
+    }
+
+    console.log('\nStep 6: Starting claude-mem worker...\n');
+
+    const port = getWorkerPort();
+    const alreadyRunning = await waitForHealth(port, 1000);
+
+    if (alreadyRunning) {
+      console.log('Worker is already running!\n');
+    } else {
+      console.log('   Starting worker in background...');
+
+      const pid = spawnDaemon(__filename, port);
+      if (pid === undefined) {
+        console.error('Failed to start worker');
+        rl.close();
+        return 1;
+      }
+
+      writePidFile({ pid, port, startedAt: new Date().toISOString() });
+
+      const healthy = await waitForHealth(port, getPlatformTimeout(30000));
+      if (!healthy) {
+        removePidFile();
+        console.error('Worker failed to start');
+        rl.close();
+        return 1;
+      }
+
+      console.log('Worker started successfully!\n');
+    }
+
+    console.log(`
+╔══════════════════════════════════════════════════════════════════╗
+║                    Setup Complete!                               ║
+╚══════════════════════════════════════════════════════════════════╝
+
+What's installed:
+  - Cursor hooks - Automatically capture sessions
+  - Context injection - Past work injected into new chats
+  - MCP search server - Ask "what did I work on last week?"
+
+Next steps:
+  1. Restart Cursor to load the hooks and MCP server
+  2. Start chatting - your sessions will be remembered!
+  3. Use natural language to search: "find where I fixed the auth bug"
+
+Useful commands:
+  npm run cursor:status     Check installation status
+  npm run worker:status     Check worker status
+  npm run worker:logs       View worker logs
+
+Memory viewer:
+  http://localhost:${port}
+
+Documentation:
+  https://docs.claude-mem.ai/cursor
+`);
+
+    rl.close();
+    return 0;
+  } catch (error) {
+    rl.close();
+    console.error(`\nSetup failed: ${(error as Error).message}`);
+    return 1;
+  }
+}
+
+// ============================================================================
+// CLI Entry Point
+// ============================================================================
+
+async function main() {
+  const command = process.argv[2];
+  const port = getWorkerPort();
+
+  switch (command) {
+    case 'start': {
+      if (await waitForHealth(port, 1000)) {
+        const versionCheck = await checkVersionMatch(port);
+        if (!versionCheck.matches) {
+          logger.info('SYSTEM', 'Worker version mismatch detected - auto-restarting', {
+            pluginVersion: versionCheck.pluginVersion,
+            workerVersion: versionCheck.workerVersion
+          });
+
+          await httpShutdown(port);
+          const freed = await waitForPortFree(port, getPlatformTimeout(15000));
+          if (!freed) {
+            logger.error('SYSTEM', 'Port did not free up after shutdown for version mismatch restart', { port });
+            process.exit(1);
+          }
+          removePidFile();
+        } else {
+          logger.info('SYSTEM', 'Worker already running and healthy');
+          process.exit(0);
+        }
+      }
+
+      const portInUse = await isPortInUse(port);
+      if (portInUse) {
+        logger.info('SYSTEM', 'Port in use, waiting for worker to become healthy');
+        const healthy = await waitForHealth(port, getPlatformTimeout(15000));
+        if (healthy) {
+          logger.info('SYSTEM', 'Worker is now healthy');
+          process.exit(0);
+        }
+        logger.error('SYSTEM', 'Port in use but worker not responding to health checks');
+        process.exit(1);
+      }
+
+      logger.info('SYSTEM', 'Starting worker daemon');
+      const pid = spawnDaemon(__filename, port);
+      if (pid === undefined) {
+        logger.error('SYSTEM', 'Failed to spawn worker daemon');
+        process.exit(1);
+      }
+
+      writePidFile({ pid, port, startedAt: new Date().toISOString() });
+
+      const healthy = await waitForHealth(port, getPlatformTimeout(30000));
+      if (!healthy) {
+        removePidFile();
+        logger.error('SYSTEM', 'Worker failed to start (health check timeout)');
+        process.exit(1);
+      }
+
+      logger.info('SYSTEM', 'Worker started successfully');
+      process.exit(0);
+    }
+
+    case 'stop': {
+      await httpShutdown(port);
+      const freed = await waitForPortFree(port, getPlatformTimeout(15000));
+      if (!freed) {
+        logger.warn('SYSTEM', 'Port did not free up after shutdown', { port });
+      }
+      removePidFile();
+      logger.info('SYSTEM', 'Worker stopped successfully');
+      process.exit(0);
+    }
+
+    case 'restart': {
+      logger.info('SYSTEM', 'Restarting worker');
+      await httpShutdown(port);
+      const freed = await waitForPortFree(port, getPlatformTimeout(15000));
+      if (!freed) {
+        logger.error('SYSTEM', 'Port did not free up after shutdown, aborting restart', { port });
+        process.exit(1);
+      }
+      removePidFile();
+
+      const pid = spawnDaemon(__filename, port);
+      if (pid === undefined) {
+        logger.error('SYSTEM', 'Failed to spawn worker daemon during restart');
+        process.exit(1);
+      }
+
+      writePidFile({ pid, port, startedAt: new Date().toISOString() });
+
+      const healthy = await waitForHealth(port, getPlatformTimeout(30000));
+      if (!healthy) {
+        removePidFile();
+        logger.error('SYSTEM', 'Worker failed to restart');
+        process.exit(1);
+      }
+
+      logger.info('SYSTEM', 'Worker restarted successfully');
+      process.exit(0);
+    }
+
+    case 'status': {
+      const running = await isPortInUse(port);
+      const pidInfo = readPidFile();
+      if (running && pidInfo) {
+        console.log('Worker is running');
+        console.log(`  PID: ${pidInfo.pid}`);
+        console.log(`  Port: ${pidInfo.port}`);
+        console.log(`  Started: ${pidInfo.startedAt}`);
+      } else {
+        console.log('Worker is not running');
+      }
+      process.exit(0);
+    }
+
+    case 'cursor': {
+      const subcommand = process.argv[3];
+      const cursorResult = await handleCursorCommand(subcommand, process.argv.slice(4));
+      process.exit(cursorResult);
+    }
+
+    case '--daemon':
+    default: {
+      const worker = new WorkerService();
+      worker.start().catch((error) => {
+        logger.failure('SYSTEM', 'Worker failed to start', {}, error as Error);
+        removePidFile();
+        process.exit(1);
+      });
+    }
+  }
+}
+
+// Check if running as main module in both ESM and CommonJS
+const isMainModule = typeof require !== 'undefined' && typeof module !== 'undefined'
+  ? require.main === module || !module.parent
+  : import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('worker-service');
+
+if (isMainModule) {
+  main();
 }

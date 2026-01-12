@@ -8,15 +8,14 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
 import { readFileSync, statSync, existsSync } from 'fs';
+import { logger } from '../../../../utils/logger.js';
 import { homedir } from 'os';
 import { getPackageRoot } from '../../../../shared/paths.js';
 import { getWorkerPort } from '../../../../shared/worker-utils.js';
-import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsManager.js';
 import { PaginationHelper } from '../../PaginationHelper.js';
 import { DatabaseManager } from '../../DatabaseManager.js';
 import { SessionManager } from '../../SessionManager.js';
 import { SSEBroadcaster } from '../../SSEBroadcaster.js';
-import { ShrinkAnalyzer } from '../../ShrinkAnalyzer.js';
 import type { WorkerService } from '../../../worker-service.js';
 import { BaseRouteHandler } from '../BaseRouteHandler.js';
 
@@ -40,7 +39,6 @@ export class DataRoutes extends BaseRouteHandler {
 
     // Fetch by ID endpoints
     app.get('/api/observation/:id', this.handleGetObservationById.bind(this));
-    app.delete('/api/observation/:id', this.handleDeleteObservation.bind(this));
     app.post('/api/observations/batch', this.handleGetObservationsByIds.bind(this));
     app.get('/api/session/:id', this.handleGetSessionById.bind(this));
     app.post('/api/sdk-sessions/batch', this.handleGetSdkSessionsByIds.bind(this));
@@ -54,12 +52,14 @@ export class DataRoutes extends BaseRouteHandler {
     app.get('/api/processing-status', this.handleGetProcessingStatus.bind(this));
     app.post('/api/processing', this.handleSetProcessing.bind(this));
 
+    // Pending queue management endpoints
+    app.get('/api/pending-queue', this.handleGetPendingQueue.bind(this));
+    app.post('/api/pending-queue/process', this.handleProcessPendingQueue.bind(this));
+    app.delete('/api/pending-queue/failed', this.handleClearFailedQueue.bind(this));
+    app.delete('/api/pending-queue/all', this.handleClearAllQueue.bind(this));
+
     // Import endpoint
     app.post('/api/import', this.handleImport.bind(this));
-
-    // Shrink endpoints
-    app.post('/api/shrink/analyze', this.handleShrinkAnalyze.bind(this));
-    app.post('/api/shrink/execute', this.handleShrinkExecute.bind(this));
   }
 
   /**
@@ -106,38 +106,6 @@ export class DataRoutes extends BaseRouteHandler {
     }
 
     res.json(observation);
-  });
-
-  /**
-   * Delete observation by ID
-   * DELETE /api/observation/:id
-   */
-  private handleDeleteObservation = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const id = this.parseIntParam(req, res, 'id');
-    if (id === null) return;
-
-    const store = this.dbManager.getSessionStore();
-    const observation = store.getObservationById(id);
-
-    if (!observation) {
-      this.notFound(res, `Observation #${id} not found`);
-      return;
-    }
-
-    const deleted = store.deleteObservationById(id);
-
-    if (!deleted) {
-      res.status(500).json({ error: 'Failed to delete observation' });
-      return;
-    }
-
-    this.sseBroadcaster.broadcast({
-      type: 'observation_deleted',
-      id,
-      project: observation.project
-    });
-
-    res.json({ success: true, id });
   });
 
   /**
@@ -192,18 +160,18 @@ export class DataRoutes extends BaseRouteHandler {
   /**
    * Get SDK sessions by SDK session IDs
    * POST /api/sdk-sessions/batch
-   * Body: { sdkSessionIds: string[] }
+   * Body: { memorySessionIds: string[] }
    */
   private handleGetSdkSessionsByIds = this.wrapHandler((req: Request, res: Response): void => {
-    const { sdkSessionIds } = req.body;
+    const { memorySessionIds } = req.body;
 
-    if (!Array.isArray(sdkSessionIds)) {
-      this.badRequest(res, 'sdkSessionIds must be an array');
+    if (!Array.isArray(memorySessionIds)) {
+      this.badRequest(res, 'memorySessionIds must be an array');
       return;
     }
 
     const store = this.dbManager.getSessionStore();
-    const sessions = store.getSdkSessionsBySessionIds(sdkSessionIds);
+    const sessions = store.getSdkSessionsBySessionIds(memorySessionIds);
     res.json(sessions);
   });
 
@@ -244,7 +212,7 @@ export class DataRoutes extends BaseRouteHandler {
     const totalSummaries = db.prepare('SELECT COUNT(*) as count FROM session_summaries').get() as { count: number };
 
     // Get database file size and path
-    const dbPath = path.join(SettingsDefaultsManager.get('CLAUDE_MEM_DATA_DIR'), 'claude-mem.db');
+    const dbPath = path.join(homedir(), '.claude-mem', 'claude-mem.db');
     let dbSize = 0;
     if (existsSync(dbPath)) {
       dbSize = statSync(dbPath).size;
@@ -405,56 +373,94 @@ export class DataRoutes extends BaseRouteHandler {
   });
 
   /**
-   * Analyze observations for shrinking
-   * POST /api/shrink/analyze
-   * Body: { project?: string, targetReduction?: number, minAge?: number, minScore?: number }
+   * Get pending queue contents
+   * GET /api/pending-queue
+   * Returns all pending, processing, and failed messages with optional recently processed
    */
-  private handleShrinkAnalyze = this.wrapHandler((req: Request, res: Response): void => {
-    const { project, targetReduction, minAge, maxAge, minScore } = req.body;
+  private handleGetPendingQueue = this.wrapHandler((req: Request, res: Response): void => {
+    const { PendingMessageStore } = require('../../../sqlite/PendingMessageStore.js');
+    const pendingStore = new PendingMessageStore(this.dbManager.getSessionStore().db, 3);
 
-    const store = this.dbManager.getSessionStore();
-    const analyzer = new ShrinkAnalyzer(store);
+    // Get queue contents (pending, processing, failed)
+    const queueMessages = pendingStore.getQueueMessages();
 
-    const analysis = analyzer.analyze({
-      project,
-      targetReduction: targetReduction ? parseFloat(targetReduction) : undefined,
-      minAge: minAge ? parseInt(minAge) : undefined,
-      maxAge: maxAge ? parseInt(maxAge) : undefined,
-      minScore: minScore ? parseFloat(minScore) : undefined
+    // Get recently processed (last 30 min, up to 20)
+    const recentlyProcessed = pendingStore.getRecentlyProcessed(20, 30);
+
+    // Get stuck message count (processing > 5 min)
+    const stuckCount = pendingStore.getStuckCount(5 * 60 * 1000);
+
+    // Get sessions with pending work
+    const sessionsWithPending = pendingStore.getSessionsWithPendingMessages();
+
+    res.json({
+      queue: {
+        messages: queueMessages,
+        totalPending: queueMessages.filter((m: { status: string }) => m.status === 'pending').length,
+        totalProcessing: queueMessages.filter((m: { status: string }) => m.status === 'processing').length,
+        totalFailed: queueMessages.filter((m: { status: string }) => m.status === 'failed').length,
+        stuckCount
+      },
+      recentlyProcessed,
+      sessionsWithPendingWork: sessionsWithPending
     });
-
-    res.json(analysis);
   });
 
   /**
-   * Execute shrink operation
-   * POST /api/shrink/execute
-   * Body: { observationIds: number[] }
+   * Process pending queue
+   * POST /api/pending-queue/process
+   * Body: { sessionLimit?: number } - defaults to 10
+   * Starts SDK agents for sessions with pending messages
    */
-  private handleShrinkExecute = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const { observationIds } = req.body;
+  private handleProcessPendingQueue = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
+    const sessionLimit = Math.min(
+      Math.max(parseInt(req.body.sessionLimit, 10) || 10, 1),
+      100 // Max 100 sessions at once
+    );
 
-    if (!Array.isArray(observationIds) || observationIds.length === 0) {
-      this.badRequest(res, 'observationIds must be a non-empty array');
-      return;
-    }
-
-    const store = this.dbManager.getSessionStore();
-    const analyzer = new ShrinkAnalyzer(store);
-
-    const result = await analyzer.executeShrink(observationIds);
-
-    for (const id of observationIds) {
-      this.sseBroadcaster.broadcast({
-        type: 'observation_deleted',
-        id
-      });
-    }
+    const result = await this.workerService.processPendingQueues(sessionLimit);
 
     res.json({
       success: true,
-      deleted: result.deleted,
-      failed: result.failed
+      ...result
+    });
+  });
+
+  /**
+   * Clear all failed messages from the queue
+   * DELETE /api/pending-queue/failed
+   * Returns the number of messages cleared
+   */
+  private handleClearFailedQueue = this.wrapHandler((req: Request, res: Response): void => {
+    const { PendingMessageStore } = require('../../../sqlite/PendingMessageStore.js');
+    const pendingStore = new PendingMessageStore(this.dbManager.getSessionStore().db, 3);
+
+    const clearedCount = pendingStore.clearFailed();
+
+    logger.info('QUEUE', 'Cleared failed queue messages', { clearedCount });
+
+    res.json({
+      success: true,
+      clearedCount
+    });
+  });
+
+  /**
+   * Clear all messages from the queue (pending, processing, and failed)
+   * DELETE /api/pending-queue/all
+   * Returns the number of messages cleared
+   */
+  private handleClearAllQueue = this.wrapHandler((req: Request, res: Response): void => {
+    const { PendingMessageStore } = require('../../../sqlite/PendingMessageStore.js');
+    const pendingStore = new PendingMessageStore(this.dbManager.getSessionStore().db, 3);
+
+    const clearedCount = pendingStore.clearAll();
+
+    logger.warn('QUEUE', 'Cleared ALL queue messages (pending, processing, failed)', { clearedCount });
+
+    res.json({
+      success: true,
+      clearedCount
     });
   });
 }
