@@ -172,7 +172,7 @@ SELECT
 If FTS5 counts don't match, triggers may have failed. Restart worker to rebuild:
 
 ```bash
-cd ~/.claude/plugins/marketplaces/thedotmack/
+cd ~/.claude/plugins/marketplaces/ibrahemid/
 claude-mem restart
 ```
 
@@ -229,7 +229,7 @@ ls -la ~/.claude-mem/claude-mem.db-wal
 ls -la ~/.claude-mem/claude-mem.db-shm
 
 # Remove lock files (only if worker is stopped!)
-cd ~/.claude/plugins/marketplaces/thedotmack/
+cd ~/.claude/plugins/marketplaces/ibrahemid/
 npm run worker:stop
 rm ~/.claude-mem/claude-mem.db-wal ~/.claude-mem/claude-mem.db-shm
 npm run worker:start
@@ -262,7 +262,7 @@ sqlite3 ~/.claude-mem/claude-mem.db "SELECT COUNT(*) FROM observations;"
 3. Archive and start fresh:
    ```bash
    mv ~/.claude-mem/claude-mem.db ~/.claude-mem/claude-mem.db.archive
-   cd ~/.claude/plugins/marketplaces/thedotmack/
+   cd ~/.claude/plugins/marketplaces/ibrahemid/
    claude-mem restart
    ```
 
@@ -278,7 +278,7 @@ cp ~/.claude-mem/claude-mem.db ~/.claude-mem/claude-mem.db.backup
 ### Restore from Backup
 
 ```bash
-cd ~/.claude/plugins/marketplaces/thedotmack/
+cd ~/.claude/plugins/marketplaces/ibrahemid/
 npm run worker:stop
 cp ~/.claude-mem/claude-mem.db.backup ~/.claude-mem/claude-mem.db
 npm run worker:start
@@ -304,7 +304,7 @@ sqlite3 ~/.claude-mem/claude-mem.db -json "SELECT * FROM user_prompts;" > prompt
 **WARNING: Data loss. Backup first!**
 
 ```bash
-cd ~/.claude/plugins/marketplaces/thedotmack/
+cd ~/.claude/plugins/marketplaces/ibrahemid/
 
 # Stop worker
 npm run worker:stop

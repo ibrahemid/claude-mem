@@ -12,7 +12,7 @@ First, verify if the worker service is running:
 
 ```bash
 # Check worker status using npm script
-cd ~/.claude/plugins/marketplaces/thedotmack/
+cd ~/.claude/plugins/marketplaces/ibrahemid/
 npm run worker:status
 
 # Or check health endpoint directly
@@ -31,7 +31,7 @@ curl -s http://127.0.0.1:37777/health
 
 **If worker not running:**
 ```bash
-cd ~/.claude/plugins/marketplaces/thedotmack/
+cd ~/.claude/plugins/marketplaces/ibrahemid/
 npm run worker:start
 ```
 
@@ -106,7 +106,7 @@ sqlite3 ~/.claude-mem/claude-mem.db "SELECT created_at, type, title FROM observa
 Verify all required npm packages are installed:
 
 ```bash
-cd ~/.claude/plugins/marketplaces/thedotmack/
+cd ~/.claude/plugins/marketplaces/ibrahemid/
 
 # Check for critical packages
 ls node_modules/@anthropic-ai/claude-agent-sdk 2>&1 | head -1
@@ -120,7 +120,7 @@ bun --version 2>&1
 
 **If dependencies missing:**
 ```bash
-cd ~/.claude/plugins/marketplaces/thedotmack/
+cd ~/.claude/plugins/marketplaces/ibrahemid/
 npm install
 ```
 
@@ -130,7 +130,7 @@ Review recent worker logs for errors:
 
 ```bash
 # View logs using npm script
-cd ~/.claude/plugins/marketplaces/thedotmack/
+cd ~/.claude/plugins/marketplaces/ibrahemid/
 npm run worker:logs
 
 # View today's log file directly
@@ -195,8 +195,8 @@ echo "   Node version: $(node --version 2>/dev/null || echo 'N/A')"
 echo "   Bun version: $(bun --version 2>/dev/null || echo 'N/A')"
 echo ""
 echo "2. Plugin Installation"
-echo "   Plugin directory exists: $([ -d ~/.claude/plugins/marketplaces/thedotmack ] && echo 'YES' || echo 'NO')"
-echo "   Package version: $(grep '"version"' ~/.claude/plugins/marketplaces/thedotmack/package.json 2>/dev/null | head -1)"
+echo "   Plugin directory exists: $([ -d ~/.claude/plugins/marketplaces/ibrahemid ] && echo 'YES' || echo 'NO')"
+echo "   Package version: $(grep '"version"' ~/.claude/plugins/marketplaces/ibrahemid/package.json 2>/dev/null | head -1)"
 echo ""
 echo "3. Database"
 echo "   Database exists: $([ -f ~/.claude-mem/claude-mem.db ] && echo 'YES' || echo 'NO')"
@@ -264,7 +264,7 @@ echo "Running automated fix sequence..."
 
 # 1. Stop worker if running
 echo "1. Stopping worker..."
-cd ~/.claude/plugins/marketplaces/thedotmack/
+cd ~/.claude/plugins/marketplaces/ibrahemid/
 npm run worker:stop
 
 # 2. Clean stale PID if exists
@@ -295,7 +295,7 @@ echo "Fix sequence complete!"
 If troubleshooting doesn't resolve the issue, run the built-in bug report tool:
 
 ```bash
-cd ~/.claude/plugins/marketplaces/thedotmack/
+cd ~/.claude/plugins/marketplaces/ibrahemid/
 npm run bug-report
 ```
 
@@ -306,4 +306,4 @@ This will collect:
 4. Configuration details
 5. Database stats
 
-Post the generated report to: https://github.com/thedotmack/claude-mem/issues
+Post the generated report to: https://github.com/ibrahemid/claude-mem/issues
